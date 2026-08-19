@@ -40,6 +40,8 @@ type Store interface {
 	DisableUser(uid int64) error
 	EnableUser(uid int64) error
 	DeleteGroupByGUID(gUID int64) error
+	ListGroupMembers(gUID int64) ([]int64, error)
+	DeleteAllGroupConversationViews(gUID int64) error
 	// 版本发布
 	GetAdminByID(id int64) (*mysql.AdminUser, error)
 	UpdateAdminPassword(id int64, passwordHash string) error
@@ -57,7 +59,15 @@ type Service struct {
 	kick  func(uid int64, reason string) // 可选：禁用时踢该用户下线（由网关注入）
 	loginCache LoginCache // 可选：登录限流缓存（Redis），nil 时不限流
 	downloadHosts map[string]bool // 可选：版本下载地址域名白名单，空时仅校验 https 协议
+	dismissNotify DismissNotifier // 可选：解散群时通知成员清理会话（由网关注入）
 }
+
+// DismissNotifier 解散群通知：向成员推送 group.left 事件（复用退群事件语义，
+// 客户端据此清理会话列表与本地消息，无需客户端改动）。
+type DismissNotifier func(uid int64, gUID, convID int64)
+
+// SetDismissNotifier 运行时注入解散群通知能力（由装配层用网关实现）。
+func (s *Service) SetDismissNotifier(fn DismissNotifier) { s.dismissNotify = fn }
 
 // SetAllowedDownloadHosts 注入版本下载地址域名白名单（审计 L2，由装配层用 OSS 域名注入）。
 // 白名单为空时仅强制 https，不阻断未配置 OSS 的部署。
@@ -331,11 +341,22 @@ func (s *Service) ListGroups(offset, limit int, keyword string) ([]*GroupDTO, er
 }
 
 // DeleteGroup 解散群（审计 L7：操作留痕）。
+// 完整清理（审计 P0）：删除前先取群信息与成员列表；删除后清理全体成员会话视图，
+// 并逐个通知成员实时清理客户端会话，避免残留幽灵群会话。
 func (s *Service) DeleteGroup(operatorID, gUID int64) error {
+	// 删除前取会话 ID 与成员列表（删后无法再查）
+	g, _ := s.store.GetGroupByGUID(gUID)
+	members, _ := s.store.ListGroupMembers(gUID)
 	if err := s.store.DeleteGroupByGUID(gUID); err != nil {
 		return err
 	}
-	log.L().Info("admin op: delete group", "admin_id", operatorID, "target_g_uid", gUID)
+	_ = s.store.DeleteAllGroupConversationViews(gUID)
+	if g != nil && g.ConvID > 0 && s.dismissNotify != nil {
+		for _, uid := range members {
+			s.dismissNotify(uid, gUID, g.ConvID)
+		}
+	}
+	log.L().Info("admin op: delete group", "admin_id", operatorID, "target_g_uid", gUID, "members", len(members))
 	return nil
 }
 

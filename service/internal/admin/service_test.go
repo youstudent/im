@@ -22,6 +22,7 @@ func TestMain(m *testing.M) {
 type mockAdminStore struct {
 	admin    *mysql.AdminUser
 	versions []*mysql.AppVersion
+	viewsCleaned int64 // 解散群时被清理会话视图的群号（断言用）
 }
 
 func (m *mockAdminStore) GetAdminByUsername(u string) (*mysql.AdminUser, error) {
@@ -49,6 +50,13 @@ func (m *mockAdminStore) CountGroupsTotal(keyword string) (int64, error) { retur
 func (m *mockAdminStore) DisableUser(uid int64) error      { return nil }
 func (m *mockAdminStore) EnableUser(uid int64) error       { return nil }
 func (m *mockAdminStore) DeleteGroupByGUID(gUID int64) error { return nil }
+func (m *mockAdminStore) ListGroupMembers(gUID int64) ([]int64, error) {
+	return []int64{1001, 1002}, nil
+}
+func (m *mockAdminStore) DeleteAllGroupConversationViews(gUID int64) error {
+	m.viewsCleaned = gUID
+	return nil
+}
 func (m *mockAdminStore) GetGroupByGUID(gUID int64) (*mysql.Group, error) {
 	return &mysql.Group{GUID: gUID, Name: "g", ConvID: 111, CreatedAt: time.Now()}, nil
 }
@@ -146,6 +154,28 @@ func TestAdminMustChangePwd(t *testing.T) {
 	res, err = svc.Login(&LoginReq{Username: "admin", Password: "newpass123"})
 	if err != nil || res.MustChangePwd {
 		t.Fatalf("expected login with new password and flag cleared, got %+v err=%v", res, err)
+	}
+}
+
+func TestDeleteGroupCleanup(t *testing.T) {
+	svc := newTestAdmin()
+	store := svc.store.(*mockAdminStore)
+	var notified []int64
+	svc.SetDismissNotifier(func(uid, gUID, convID int64) {
+		if gUID != 77 || convID != 111 {
+			t.Fatalf("unexpected dismiss args: uid=%d g_uid=%d conv=%d", uid, gUID, convID)
+		}
+		notified = append(notified, uid)
+	})
+	// 解散群：应清理成员会话视图并通知全部成员
+	if err := svc.DeleteGroup(1, 77); err != nil {
+		t.Fatalf("delete group failed: %v", err)
+	}
+	if store.viewsCleaned != 77 {
+		t.Fatalf("conversation views not cleaned, got g_uid=%d", store.viewsCleaned)
+	}
+	if len(notified) != 2 {
+		t.Fatalf("expected 2 members notified, got %d", len(notified))
 	}
 }
 

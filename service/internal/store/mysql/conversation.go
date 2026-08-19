@@ -179,6 +179,13 @@ func (d *DB) DeleteGroupConversationView(ownerUID, gUID int64) error {
 	return err
 }
 
+// DeleteAllGroupConversationViews 删除某群的全体成员会话视图（管理端解散群清理，
+// 避免成员会话列表残留幽灵群会话）。
+func (d *DB) DeleteAllGroupConversationViews(gUID int64) error {
+	_, err := d.Exec(`DELETE FROM conversations WHERE target_id = ? AND type = 2`, gUID)
+	return err
+}
+
 // UpdateConversationSyncedSeq 更新已同步游标。
 func (d *DB) UpdateConversationSyncedSeq(ownerUID, targetID, seq int64) error {
 	_, err := d.Exec(`UPDATE conversations SET last_synced_seq = ? WHERE owner_uid = ? AND target_id = ? AND last_synced_seq < ?`,

@@ -252,6 +252,15 @@ return redis.call('INCR', KEYS[1])
 			hub.Kick(uid, reason)
 		}
 	})
+	// 解散群时：通知全体成员实时清理会话（复用 group.left 事件语义，客户端无需改动）
+	adminSvc.SetDismissNotifier(func(uid, gUID, convID int64) {
+		if hub != nil {
+			hub.PublishLocal(uid, &gateway.Frame{Ver: 1, Type: "social", Seq: 0, Body: map[string]interface{}{
+				"event": "group.left",
+				"data":  map[string]interface{}{"g_uid": gUID, "conv_id": fmt.Sprintf("%d", convID)},
+			}})
+		}
+	})
 	adminHdlr := admin.NewHandler(adminSvc)
 
 	// 9. 文件预签名（阶段五）：OSS 未配置时返回不可用占位
