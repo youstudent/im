@@ -5,11 +5,25 @@
  * - 按账户物理隔离：每个登录账户一个独立数据库文件 accounts/{uid}/workchat.db
  * - 主进程单活连接：同一时刻只持有一个账户的 DB 句柄
  * - 渲染进程不传 owner_uid，所有读写作用于当前会话账户的库
+ *
+ * SQLCipher 全库加密（docs/桌面端本地存储方案.md 第 7 节进阶方案）：
+ * - 驱动：better-sqlite3-multiple-ciphers（better-sqlite3 的加密 fork，API 兼容）
+ * - 每账户随机密钥由 keyring.js 以 safeStorage 加密保管
+ * - 存量明文库启动时探测并自动就地迁移为加密库（原文件保留 .plain.bak 兜底）
  */
 const path = require('node:path')
 const fs = require('node:fs')
 const { app } = require('electron')
-const Database = require('better-sqlite3')
+const Database = require('better-sqlite3-multiple-ciphers')
+const keyring = require('./keyring')
+
+// 统一加密方案：SQLite3MultipleCiphers 支持多种 cipher，显式选定 sqlcipher 方案，
+// 每次连接必须先设 cipher 再设 key（方案不持久化在文件头）。
+const CIPHER_SCHEME = "cipher = 'sqlcipher'"
+
+function keyPragma(keyHex) {
+  return `key = "x'${keyHex}'"`
+}
 
 // ---- 存储根目录配置：存于 {userData}/storage-config.json ----
 // 不能存 SQLite：数据库自身位置依赖该配置，需在打开任何库之前可读。
@@ -77,12 +91,28 @@ function openSession(uid) {
 
   const dbPath = accountDbPath(uid)
   fs.mkdirSync(path.dirname(dbPath), { recursive: true })
+  const keyHex = keyring.getKey(uid)
+
+  // 先恢复上次会话中断的加密迁移（残留 .enc / .plain.bak）
+  recoverInterruptedMigration(dbPath, keyHex)
+
+  // 探测库状态：new / plain / encrypted / error
+  const state = probeDb(dbPath, keyHex)
+  if (state === 'error') {
+    throw new Error('数据库打开失败（密钥不符或文件损坏）')
+  }
+  if (state === 'plain') {
+    migratePlainToEncrypted(dbPath, keyHex)
+  }
+
   const next = new Database(dbPath)
+  next.pragma(CIPHER_SCHEME)
+  next.pragma(keyPragma(keyHex))
   next.pragma('journal_mode = WAL')
   migrate(next)
   db = next
   sessionUid = uid
-  console.log('[store] 会话已打开:', uid, dbPath)
+  console.log('[store] 会话已打开(SQLCipher 加密):', uid, dbPath)
   // 启动后台定时任务（清理/保留期/备份；惰性 require 避免循环依赖）
   try {
     require('./scheduler').start()
@@ -92,6 +122,139 @@ function openSession(uid) {
   return sessionUid
 }
 
+// ---- SQLCipher 加密：探测 / 中断恢复 / 明文迁移 ----
+
+// 探测库文件状态（加密库与明文库文件头均为 SQLite format 3，无法仅凭头区分，需尝试打开）
+function probeDb(dbPath, keyHex) {
+  let size = 0
+  try {
+    size = fs.statSync(dbPath).size
+  } catch {
+    return 'new'
+  }
+  if (size === 0) return 'new'
+
+  // 先无钥尝试：可读 = 明文库
+  try {
+    const p = new Database(dbPath, { readonly: true })
+    try {
+      p.prepare('SELECT count(*) AS c FROM sqlite_master').get()
+      return 'plain'
+    } finally {
+      p.close()
+    }
+  } catch {}
+
+  // 再带钥尝试：可读 = 已加密且密钥正确
+  try {
+    const c = new Database(dbPath, { readonly: true })
+    try {
+      c.pragma(CIPHER_SCHEME)
+      c.pragma(keyPragma(keyHex))
+      c.prepare('SELECT count(*) AS c FROM sqlite_master').get()
+      return 'encrypted'
+    } finally {
+      c.close()
+    }
+  } catch {}
+
+  return 'error'
+}
+
+// 恢复上次中断的迁移：主库缺失但存在 .enc（完成迁移）或 .plain.bak（回滚后重新迁移）
+function recoverInterruptedMigration(dbPath, keyHex) {
+  if (fs.existsSync(dbPath)) return
+  const encPath = dbPath + '.enc'
+  const bakPath = dbPath + '.plain.bak'
+  if (fs.existsSync(encPath)) {
+    // 验证 .enc 是密钥可读的完整加密库 → 完成迁移；否则丢弃（回退 .bak）
+    let valid = false
+    try {
+      const c = new Database(encPath, { readonly: true })
+      try {
+        c.pragma(CIPHER_SCHEME)
+        c.pragma(keyPragma(keyHex))
+        c.prepare('SELECT count(*) AS c FROM sqlite_master').get()
+        valid = true
+      } finally {
+        c.close()
+      }
+    } catch {}
+    if (valid) {
+      fs.renameSync(encPath, dbPath)
+      console.log('[store] 已恢复中断的加密迁移: .enc → 主库')
+    } else {
+      try {
+        fs.rmSync(encPath, { force: true })
+      } catch {}
+    }
+  }
+  if (!fs.existsSync(dbPath) && fs.existsSync(bakPath)) {
+    // 加密产物不可用：回滚到明文库，后续 probe 会重新触发迁移
+    fs.renameSync(bakPath, dbPath)
+    console.log('[store] 已回滚中断的加密迁移至明文库，将重试迁移')
+  }
+  for (const suf of ['-wal', '-shm']) {
+    try {
+      fs.rmSync(dbPath + suf, { force: true })
+    } catch {}
+  }
+}
+
+// 明文库就地迁移为加密库：新建加密空库 → 复制 schema → 逐表流式拷数据 → 替换文件。
+// 原明文库改名 .plain.bak 保留兜底；SQLite3MultipleCiphers 未注册 sqlcipher_export，故逐表复制。
+function migratePlainToEncrypted(dbPath, keyHex) {
+  const encPath = dbPath + '.enc'
+  const bakPath = dbPath + '.plain.bak'
+  try {
+    fs.rmSync(encPath, { force: true })
+  } catch {}
+
+  // 先把 WAL 落回主库，避免复制时遗漏未 checkpoint 的数据
+  const w = new Database(dbPath)
+  try {
+    w.pragma('wal_checkpoint(TRUNCATE)')
+  } catch {}
+  w.close()
+
+  const src = new Database(dbPath, { readonly: true })
+  const dst = new Database(encPath)
+  dst.pragma(CIPHER_SCHEME)
+  dst.pragma(keyPragma(keyHex))
+  try {
+    // 复制 schema：跳过 sqlite_ 前缀的内部表（如 sqlite_sequence，由 AUTOINCREMENT 自动维护）
+    const schemas = src.prepare("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'").all()
+    for (const s of schemas) dst.exec(s.sql)
+    const tables = src.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()
+    for (const t of tables) {
+      const cols = src.prepare(`PRAGMA table_info("${t.name}")`).all()
+      const colNames = cols.map((c) => `"${c.name}"`).join(', ')
+      const placeholders = cols.map(() => '?').join(', ')
+      const insert = dst.prepare(`INSERT INTO "${t.name}" (${colNames}) VALUES (${placeholders})`)
+      const select = src.prepare(`SELECT ${colNames} FROM "${t.name}"`)
+      // 流式逐行拷贝（iterate 不全量载入内存），单事务保证速度与原子性
+      dst.transaction(() => {
+        for (const row of select.iterate()) {
+          insert.run(...cols.map((c) => row[c.name]))
+        }
+      })()
+    }
+  } finally {
+    src.close()
+    dst.close()
+  }
+
+  // 替换：原库改名兜底，加密库上位
+  fs.renameSync(dbPath, bakPath)
+  fs.renameSync(encPath, dbPath)
+  for (const suf of ['-wal', '-shm']) {
+    try {
+      fs.rmSync(dbPath + suf, { force: true })
+    } catch {}
+  }
+  console.log('[store] 明文库已迁移为 SQLCipher 加密库:', dbPath)
+}
+
 // 关闭当前会话（登出/被踢/应用退出）；DB 文件保留在磁盘
 function closeSession() {
   // 停止后台定时任务（惰性 require 避免循环依赖）
@@ -99,6 +262,10 @@ function closeSession() {
     require('./scheduler').stop()
   } catch {}
   if (db) {
+    // 关闭前把 WAL 落回主库：减少 -wal/-shm 残留，降低 Windows 上文件占用导致删不掉的概率
+    try {
+      db.pragma('wal_checkpoint(TRUNCATE)')
+    } catch {}
     try {
       db.close()
     } catch (e) {
@@ -186,6 +353,11 @@ function migrate(next) {
       .run('schema_version', String(CURRENT_SCHEMA_VERSION))
     version = CURRENT_SCHEMA_VERSION
   }
+
+  // SQLCipher 加密标记（供运维排查；非 schema 版本，不递增 schema_version）
+  next
+    .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run('db_encrypted', '1')
 }
 
 module.exports = {
@@ -273,7 +445,7 @@ async function moveDir(src, dest) {
       await sleep(300)
     }
   }
-  if (renameErr && renameErr.code !== 'EXDEV') throw renameErr
+  // rename 持续失败（跨盘/文件占用）：降级为复制 + 删源（下方有复制校验与失败回滚）
   fs.cpSync(src, dest, { recursive: true })
   // 校验关键账户库已复制再删源目录
   const srcAccounts = path.join(src, 'accounts')

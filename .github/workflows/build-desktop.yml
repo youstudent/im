@@ -37,7 +37,8 @@ jobs:
           cache-dependency-path: desktop_client/package-lock.json
 
       # postinstall 会自动执行 electron-builder install-app-deps，
-      # 将 better-sqlite3 编译为当前平台 Electron ABI 版本
+      # 为 better-sqlite3-multiple-ciphers（SQLCipher 加密驱动）下载匹配当前平台
+      # Electron ABI 的 prebuild（来自 GitHub Releases）；无预编译时才需源码编译
       - name: Install dependencies
         run: npm ci
 

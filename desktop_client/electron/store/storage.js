@@ -10,6 +10,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { getDb, getSessionUid, getStorageRoot, accountDbPath, closeSession, openSession } = require('./db')
 const { filesSize } = require('./filecache')
+const keyring = require('./keyring')
 
 // ---- 目录/文件递归大小 ----
 function dirSize(dir) {
@@ -174,7 +175,10 @@ function exportMessages(filePath, format) {
   return { path: filePath, conversations: rows.length }
 }
 
-// ---- 备份：SQLite 在线备份 API 复制到 backups/ 或指定目录 ----
+// ---- 备份：VACUUM INTO 复制到 backups/ 或指定目录 ----
+// SQLCipher 加密库下 VACUUM INTO 产物继承同密钥加密（已验证），
+// 不能用 db.backup()：备份 API 会产出明文页拷贝，破坏加密。
+// 恢复时用 keyring.getKey(uid) 打开备份文件即可。
 async function createBackup(destDir) {
   const db = getDb()
   const uid = getSessionUid()
@@ -186,7 +190,8 @@ async function createBackup(destDir) {
     .replace(/[-:T]/g, '')
     .slice(0, 14)
   const dest = path.join(dir, `workchat-${uid}-${stamp}.db`)
-  await db.backup(dest)
+  db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`)
+  if (!fs.existsSync(dest)) throw new Error('备份文件未生成')
   return { path: dest }
 }
 
@@ -195,20 +200,32 @@ module.exports = { getUsage, clearCache, purgeOldMessages, exportMessages, creat
 // ---- 清除本账户数据：删除 accounts/{uid}/ 目录，随后重建空库保持应用可用 ----
 // 服务端仍是事实源，本地库可随时删除重建（重新同步）；离线发送队列一并丢弃。
 // files/ 文件缓存按内容哈希全局共享、无法归属账户，不在此清理。
-function clearAccountData() {
+async function clearAccountData() {
   const uid = getSessionUid()
   if (!uid) throw new Error('未打开账户会话，无法清除')
   closeSession()
   const dir = path.dirname(accountDbPath(uid))
-  try {
-    fs.rmSync(dir, { recursive: true, force: true })
-  } catch (e) {
+  // Windows 上文件句柄（索引/杀毒）释放有延迟，重试数次；仍失败则恢复会话并报错
+  let lastErr = null
+  for (let i = 0; i < 4; i++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+      lastErr = null
+      break
+    } catch (e) {
+      lastErr = e
+      await new Promise((r) => setTimeout(r, 300))
+    }
+  }
+  if (lastErr) {
     // 删除失败也要恢复会话，避免应用处于无库状态
     try {
       openSession(uid)
     } catch {}
-    throw new Error('清除失败：' + (e?.message || e))
+    throw new Error('清除失败：' + (lastErr?.message || lastErr))
   }
+  // 同步清除该账户的 SQLCipher 数据库密钥，避免残留（重建时 openSession 会生成新密钥）
+  keyring.removeKey(uid)
   openSession(uid) // 重建空库，保持应用可用（后续从服务端重新同步）
   console.log('[store] 已清除账户本地数据:', uid)
   return { uid }

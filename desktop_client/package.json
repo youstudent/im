@@ -1,6 +1,6 @@
 {
   "name": "desktop-client",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "基于 Electron + Vue 3 + Vite 的桌面应用开发框架",
   "author": "WorkBuddy",
   "license": "MIT",
@@ -30,7 +30,7 @@
     "rebuild": "electron-builder install-app-deps"
   },
   "dependencies": {
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3-multiple-ciphers": "12.11.1",
     "qrcode": "^1.5.4",
     "vue": "^3.5.13"
   },
