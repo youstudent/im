@@ -1,20 +1,22 @@
 # 检车家 IM（WorkChat）
 
-一套完整的即时通讯系统，包含 **桌面客户端**（Electron）、**Web 管理后台**（Vue3）和 **服务端**（Go），覆盖单聊 / 群聊 / 好友关系 / 通知中心 / 本地消息存储 / 自动更新等完整 IM 能力。
+一套完整的即时通讯系统，包含 **桌面客户端**（Electron）、**Web 管理后台**（Vue3）和 **服务端**（Go），覆盖单聊 / 群聊 / 好友关系 / 语音通话 / 通知中心 / 本地消息存储 / 自动更新等完整 IM 能力。
 
 ## 功能概览
 
 | 模块 | 功能 |
 |---|---|
-| 消息 | 单聊 / 群聊、文本 / 图片 / 文件消息、已读回执、未读计数、离线消息补推、消息撤回、@提及 |
-| 会话 | 会话列表、未读聚合、会话置顶/免打扰、会话增量同步（水位机制） |
+| 消息 | 单聊 / 群聊、文本 / 图片 / 文件 / 语音 / 视频消息、已读回执、未读计数、离线消息补推、消息撤回、@提及、聊天记录搜索 |
+| 语音通话 | 1 对 1 语音通话（WebRTC P2P + WebSocket 信令）、忙线/离线自动应答、通话记录本地落库 |
+| 会话 | 会话列表、未读聚合、会话置顶/免打扰、会话增量同步（水位机制）、媒体摘要展示（[图片]/[语音]/[视频]/[文件]） |
 | 通讯录 | 好友申请（防自加/防重复）、好友备注（展示名备注优先）、分组、二维码邀请 |
 | 群聊 | 建群 / 邀请入群、群主与管理员权限、群公告、群成员管理、退群清理 |
-| 本地存储 | 桌面端 SQLite 本地消息库、历史消息本地优先加载、聊天记录搜索、退出登录本地清理 |
+| 通知提醒 | 桌面通知与提示音（默认关闭、可配置）、任务栏未读角标、窗口未聚焦闪烁 |
+| 本地存储 | 桌面端 SQLite 本地消息库、历史消息本地优先加载、语音已播放状态持久化、通话记录本地存储、退出登录本地清理 |
 | 可靠性 | 消息乐观更新 + 30 秒超时去重、发送失败按序展示、WebSocket 心跳与令牌刷新重连 |
 | 更新 | 应用内版本检查、静默下载安装、NSIS 覆盖安装 |
-| 安全 | 登录滑动验证码（失败触发）、JWT 双令牌、文件上传校验、管理端角色鉴权 |
-| 管理后台 | 数据看板、用户管理（禁用/启用）、群组管理、版本发布管理 |
+| 安全 | 登录滑动验证码（失败触发）、JWT 双令牌、文件上传校验、管理端角色鉴权、管理端操作审计日志 |
+| 管理后台 | 数据看板、用户管理（禁用/启用）、群组管理（解散群完整清理并实时通知成员）、版本发布管理、默认管理员首次登录强制改密 |
 
 ## 整体架构
 
@@ -38,15 +40,16 @@
 ```
 .
 ├── desktop_client/        # 桌面客户端（Electron 33 + Vue 3 + Vite + better-sqlite3）
-│   ├── electron/          #   主进程：窗口、自动更新、本地存储
+│   ├── electron/          #   主进程：窗口、自动更新、本地存储、任务栏角标
 │   ├── src/               #   渲染层：Vue 组件与 API 层
+│   ├── scripts/           #   端到端测试脚本（Edge headless + CDP）
 │   └── 打包指南.md        #   多平台打包说明
 ├── service/               # 服务端（Go 1.25 + Gin）
 │   ├── cmd/server         #   服务入口
 │   ├── cmd/migrate        #   数据库迁移工具
 │   ├── internal/          #   业务模块：auth / message / social / gateway / admin / file
 │   ├── configs/           #   运行配置（config.yaml 不入库，见 config.example.yaml）
-│   └── migrations/        #   SQL 迁移脚本（0001~0010）
+│   └── migrations/        #   SQL 迁移脚本（0001~0011）
 ├── admin/                 # 管理后台（Vue 3 + Vite + vue-router）
 └── docs/                  # 架构设计、实施计划等文档
 ```
@@ -56,7 +59,7 @@
 | 端 | 技术 |
 |---|---|
 | 服务端 | Go 1.25 · Gin · gorilla/websocket · go-redis v9 · go-sql-driver/mysql · golang-jwt v5 · 阿里云 OSS SDK |
-| 桌面端 | Electron 33 · Vue 3 · Vite 5 · better-sqlite3（本地消息库）· electron-builder |
+| 桌面端 | Electron 33 · Vue 3 · Vite 5 · better-sqlite3（本地消息库）· WebRTC（语音通话）· electron-builder |
 | 管理后台 | Vue 3 · Vite 5 · vue-router |
 | 基础设施 | MySQL 8.0 · Redis 7 · 阿里云 OSS |
 
@@ -99,6 +102,20 @@ cd admin
 npm install
 npm run dev
 ```
+
+默认管理员账号：`admin` / `admin123`（服务端首次启动自动 seed，首次登录会强制修改密码）。
+
+## 测试
+
+`desktop_client/scripts/` 提供端到端测试脚本（需服务端 `:8080` 与前端 dev server `:5173` 均已启动），覆盖已读回执、未读计数、敏感词、语音通话等核心场景，例如：
+
+```powershell
+node scripts/test_read_receipt.mjs   # 协议层已读闭环
+node scripts/test_unread_cycle.mjs   # 未读计数完整周期
+node scripts/test_voice_call.mjs     # 语音通话信令端到端
+```
+
+服务端单测使用内存 mock，无需数据库：`cd service && go test ./...`
 
 ## 打包与分发
 
