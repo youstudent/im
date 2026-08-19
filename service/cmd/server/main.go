@@ -166,13 +166,18 @@ end
 return redis.call('INCR', KEYS[1])
 `)
 	msgSvc.SetSeqGen(func(convID int64) (int64, error) {
-		base, err := mysqlDB.NextSeq(convID) // 当前最大 seq + 1
+		key := fmt.Sprintf("msgseq:%d", convID)
+		// 性能优化：计数器已初始化时直接 INCR，免掉每条消息一次 SELECT MAX(seq) 回源
+		if n, err := redisClient.Exists(context.Background(), key).Result(); err == nil && n > 0 {
+			return redisClient.Incr(context.Background(), key).Result()
+		}
+		base, err := mysqlDB.NextSeq(convID) // 首次使用：以 DB 当前最大 seq 初始化
 		if err != nil {
 			return 0, err
 		}
-		// 计数器初始化为当前最大 seq，INCR 后取到 max+1；已初始化则直接递增
+		// 计数器初始化为当前最大 seq，INCR 后取到 max+1；并发首次初始化由脚本的 EXISTS 保护
 		res, err := seqScript.Run(context.Background(), redisClient.Client,
-			[]string{fmt.Sprintf("msgseq:%d", convID)}, base-1).Int64()
+			[]string{key}, base-1).Int64()
 		if err != nil {
 			return 0, err
 		}

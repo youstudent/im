@@ -68,6 +68,39 @@ func (d *DB) GetUserByAccount(account string) (*User, error) {
 	return scanUser(row)
 }
 
+// GetUsersByUIDs 批量按业务 UID 查用户（好友列表/群列表等场景，
+// 替代逐个 GetUserByUID 的 N+1）。不存在的 uid 不在返回 map 中。
+func (d *DB) GetUsersByUIDs(uids []int64) map[int64]*User {
+	out := make(map[int64]*User, len(uids))
+	if len(uids) == 0 {
+		return out
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT " + userCols + " FROM users WHERE uid IN (")
+	args := make([]interface{}, 0, len(uids))
+	for i, uid := range uids {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("?")
+		args = append(args, uid)
+	}
+	sb.WriteString(")")
+	rows, err := d.Query(sb.String(), args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return out
+		}
+		out[u.UID] = u
+	}
+	return out
+}
+
 // TouchLastSeen 更新最后上线时间与在线状态。
 func (d *DB) TouchLastSeen(uid int64, status int8) error {
 	_, err := d.Exec(`UPDATE users SET last_seen_at = ?, status = ? WHERE uid = ?`,

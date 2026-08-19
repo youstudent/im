@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -32,16 +33,45 @@ func msgTable(convID int64) string {
 	return TableName("messages", Shard(convID, ShardCount))
 }
 
+// userNameCache 昵称短 TTL 缓存（P1 优化）：发送回显/撤回等单发场景频繁查同一发送者，
+// 缓存 5 分钟降低查库量；昵称修改最多延迟一个 TTL 生效（当前无昵称修改接口，无失效问题）。
+var (
+	userNameCacheMu sync.Mutex
+	userNameCache   = make(map[int64]userNameEntry)
+)
+
+type userNameEntry struct {
+	name  string
+	until time.Time
+}
+
+const userNameCacheTTL = 5 * time.Minute
+
 // GetUserName 按业务 uid 查询用户昵称（用于消息展示发送者名），用户不存在返回空串。
 func (d *DB) GetUserName(uid int64) string {
 	if uid <= 0 {
 		return ""
 	}
-	u, err := d.GetUserByUID(uid)
-	if err != nil {
-		return ""
+	now := time.Now()
+	userNameCacheMu.Lock()
+	if e, ok := userNameCache[uid]; ok && now.Before(e.until) {
+		userNameCacheMu.Unlock()
+		return e.name
 	}
-	return u.Nickname
+	// 超容量时整体清空（简单高效，避免无界增长）
+	if len(userNameCache) > 10000 {
+		userNameCache = make(map[int64]userNameEntry)
+	}
+	userNameCacheMu.Unlock()
+	u, err := d.GetUserByUID(uid)
+	name := ""
+	if err == nil {
+		name = u.Nickname
+	}
+	userNameCacheMu.Lock()
+	userNameCache[uid] = userNameEntry{name: name, until: now.Add(userNameCacheTTL)}
+	userNameCacheMu.Unlock()
+	return name
 }
 
 // CreateMessage 插入一条消息，并返回其 seq。

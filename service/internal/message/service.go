@@ -36,6 +36,8 @@ type Store interface {
 	ListMessagesBefore(convID, beforeSeq int64, limit int) ([]*mysql.Message, error)
 	MessageExists(convID, msgID int64) (bool, error)
 	GetLastReadSeq(uid, convID int64) (int64, error)
+	// P1 性能优化：会话列表对端已读游标批量查（替代逐会话 N+1）
+	GetPeerReadSeqs(pairs [][2]int64) (map[int64]int64, error)
 	UpsertReadSeq(uid, convID, seq int64) error
 	SearchMessages(keyword string, msgType int8, convIDs []int64, limit int) ([]*mysql.SearchResult, error)
 	GetUserName(uid int64) string
@@ -442,6 +444,30 @@ func (s *Service) updateConvLastMsg(ownerUID, targetID int64, msg *mysql.Message
 	_ = s.store.UpdateConversationLastMsg(conv.OwnerUID, conv.TargetID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt)
 }
 
+// audioExts 可作为 FILE 类型发送的音频扩展名集合（桌面端录音等以文件形式发出）。
+var audioExts = map[string]bool{
+	".webm": true, ".m4a": true, ".aac": true, ".mp3": true,
+	".wav": true, ".ogg": true, ".flac": true,
+}
+
+// isAudioContent 判断 FILE 消息的 content（资源 URL）是否为音频文件：
+// 录音产物以 FILE(type=3) 发出，按音频后缀识别后会话摘要才能展示 [语音] 而非 [文件]。
+func isAudioContent(content string) bool {
+	p := content
+	if u, err := url.Parse(content); err == nil && u.Path != "" {
+		p = u.Path
+	} else {
+		p, _, _ = strings.Cut(p, "?")
+	}
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		p = p[i+1:]
+	}
+	if i := strings.LastIndex(p, "."); i >= 0 {
+		return audioExts[strings.ToLower(p[i:])]
+	}
+	return false
+}
+
 // convPreview 根据消息类型生成会话列表最后一条消息的展示文本。
 // 消息类型：1 文本 / 2 图片 / 3 文件 / 4 语音 / 5 视频 / 6 系统。
 // 非文本类型返回类型占位（如 [图片]），避免会话列表展示原始资源 URL。
@@ -450,6 +476,9 @@ func convPreview(msgType int8, content string) string {
 	case 2:
 		return "[图片]"
 	case 3:
+		if isAudioContent(content) {
+			return "[语音]"
+		}
 		return "[文件]"
 	case 4:
 		return "[语音]"
@@ -517,26 +546,31 @@ func (s *Service) ListConversationsChangedSince(uid int64, since time.Time) ([]*
 
 // toConversationDTOs 会话行 → DTO（未读数直读 unread_count 列；单聊附带对端已读游标）。
 func (s *Service) toConversationDTOs(uid int64, convs []*mysql.Conversation) []*ConversationDTO {
+	// 对端已读游标（仅单聊）：用于前端恢复"我发出的消息是否已被对方读"。
+	// P1 优化：先收集全部 (对端 uid, conv_id) 对一次批量查，替代逐会话 GetLastReadSeq 的 N+1。
+	pairs := make([][2]int64, 0, len(convs))
+	for _, c := range convs {
+		if c.Type != 1 {
+			continue
+		}
+		peer := c.TargetID
+		if c.OwnerUID != uid {
+			peer = c.OwnerUID
+		}
+		pairs = append(pairs, [2]int64{peer, c.ID})
+	}
+	readSeqs, err := s.store.GetPeerReadSeqs(pairs)
+	if err != nil {
+		readSeqs = map[int64]int64{} // 批量查失败降级为全 0，不阻塞会话列表
+	}
 	list := make([]*ConversationDTO, 0, len(convs))
 	for _, c := range convs {
 		// 未读数直接读 unread_count 列（P2：发消息累加/已读清零/撤回递减，
-		// 替代旧 seq 差值计算：消除撤回场景虚高 + 免去逐会话 GetLastReadSeq 的 N+1）
+		// 替代旧 seq 差值计算：消除撤回场景虚高）
 		unread := int(c.UnreadCount)
 		var lastMsgTime int64
 		if c.LastMsgTime != nil {
 			lastMsgTime = c.LastMsgTime.Unix()
-		}
-		// 对端已读游标（仅单聊）：用于前端恢复"我发出的消息是否已被对方读"。
-		// 对端 = 会话中非当前用户的一方；群聊不实现，返回 0。
-		var peerReadSeq int64
-		if c.Type == 1 {
-			peer := c.TargetID
-			if c.OwnerUID == uid {
-				peer = c.TargetID
-			} else {
-				peer = c.OwnerUID
-			}
-			peerReadSeq, _ = s.store.GetLastReadSeq(peer, c.ID)
 		}
 		list = append(list, &ConversationDTO{
 			ID:          c.ID,
@@ -546,7 +580,7 @@ func (s *Service) toConversationDTOs(uid int64, convs []*mysql.Conversation) []*
 			LastMsgTime: lastMsgTime,
 			Unread:      unread,
 			Muted:       c.Muted == 1,
-			PeerReadSeq: peerReadSeq,
+			PeerReadSeq: readSeqs[c.ID], // 群聊/无记录为 0
 			// 已同步水位：客户端据此条件同步（本地已追平则跳过历史拉取，减压服务端）
 			LastSyncedSeq: c.LastSyncedSeq,
 		})

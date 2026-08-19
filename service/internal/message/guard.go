@@ -46,11 +46,23 @@ func newRateLimiter(window time.Duration, max int) *rateLimiter {
 	return &rateLimiter{window: window, max: max, buckets: make(map[int64]*rateBucket)}
 }
 
+// limiterSweepThreshold 桶数量超过该阈值时顺手清理过期窗口，
+// 防止长期运行下每个发过消息的 uid 常驻内存缓慢膨胀。
+const limiterSweepThreshold = 10000
+
 // Allow 判断 uid 是否允许发送；不允许时返回剩余等待时间。
 func (r *rateLimiter) Allow(uid int64) (ok bool, wait time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
+	// 桶过多时顺手清理过期窗口（低频，摄锁内 O(n) 但只在超阈时发生）
+	if len(r.buckets) > limiterSweepThreshold {
+		for k, b := range r.buckets {
+			if now.Sub(b.start) >= r.window {
+				delete(r.buckets, k)
+			}
+		}
+	}
 	b, exists := r.buckets[uid]
 	if !exists || now.Sub(b.start) >= r.window {
 		// 新窗口

@@ -1,7 +1,10 @@
 // message_read.go：已读状态表 DAO。
 package mysql
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 // GetLastReadSeq 查询某用户在某会话的最后已读 seq。
 func (d *DB) GetLastReadSeq(uid, convID int64) (int64, error) {
@@ -14,6 +17,40 @@ func (d *DB) GetLastReadSeq(uid, convID int64) (int64, error) {
 		return 0, err
 	}
 	return seq, nil
+}
+
+// GetPeerReadSeqs 批量查询多个 (uid, conv_id) 对的已读游标（会话列表对端已读恢复，
+// 替代逐会话 GetLastReadSeq 的 N+1）。pairs 元素为 [uid, convID]；
+// 返回 conv_id -> last_read_seq，无记录的会话不在 map 中。
+func (d *DB) GetPeerReadSeqs(pairs [][2]int64) (map[int64]int64, error) {
+	out := make(map[int64]int64, len(pairs))
+	if len(pairs) == 0 {
+		return out, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT conv_id, last_read_seq FROM message_reads WHERE (uid, conv_id) IN (")
+	args := make([]interface{}, 0, len(pairs)*2)
+	for i, p := range pairs {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString("(?,?)")
+		args = append(args, p[0], p[1])
+	}
+	sb.WriteByte(')')
+	rows, err := d.Query(sb.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var convID, seq int64
+		if err := rows.Scan(&convID, &seq); err != nil {
+			return nil, err
+		}
+		out[convID] = seq
+	}
+	return out, rows.Err()
 }
 
 // UpsertReadSeq 更新已读 seq（仅前向推进），并将该会话视图的未读计数清零。

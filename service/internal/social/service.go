@@ -31,6 +31,10 @@ type Store interface {
 	IsGroupMember(gUID, uid int64) (bool, error)
 	GetGroupMemberRole(gUID, uid int64) (int8, error)
 	ListGroupMembers(gUID int64) ([]int64, error)
+	// P1 性能优化：好友/群列表批量查，消除逐条 N+1
+	GetUsersByUIDs(uids []int64) map[int64]*mysql.User
+	GetGroupsByGUIDs(gUIDs []int64) map[int64]*mysql.Group
+	GroupMemberCounts(gUIDs []int64) map[int64]int
 	ListUserGroups(uid int64) ([]int64, error)
 	UpdateGroup(gUID int64, name, announcement string) error
 	GUIDExists(gUID int64) (bool, error)
@@ -127,16 +131,21 @@ func (s *Service) SearchUser(account string) (*FriendDTO, error) {
 	}, nil
 }
 
-// ListFriends 好友列表。
+// ListFriends 好友列表（P1 优化：昵称/头像一次批量查，消除逐好友 GetUserByUID 的 N+1）。
 func (s *Service) ListFriends(uid int64) ([]*FriendDTO, error) {
 	friends, err := s.store.ListFriends(uid)
 	if err != nil {
 		return nil, apperr.WrapInternal("获取好友列表失败", err)
 	}
+	uids := make([]int64, 0, len(friends))
+	for _, f := range friends {
+		uids = append(uids, f.FriendUID)
+	}
+	users := s.store.GetUsersByUIDs(uids)
 	list := make([]*FriendDTO, 0, len(friends))
 	for _, f := range friends {
-		u, err := s.store.GetUserByUID(f.FriendUID)
-		if err != nil {
+		u := users[f.FriendUID]
+		if u == nil {
 			continue
 		}
 		list = append(list, &FriendDTO{
@@ -581,18 +590,22 @@ func (s *Service) UpdateGroupInfo(uid, gUID int64, name, announcement string) er
 	return nil
 }
 
-// ListUserGroups 我加入的群列表。
+// ListUserGroups 我加入的群列表（P1 优化：群信息与成员数各一次批量查，
+// 消除逐群 GetGroupByGUID + ListGroupMembers 的 2N 次查询）。
 func (s *Service) ListUserGroups(uid int64) ([]*GroupDTO, error) {
 	gUids, err := s.store.ListUserGroups(uid)
 	if err != nil {
 		return nil, apperr.WrapInternal("获取群列表失败", err)
 	}
+	groups := s.store.GetGroupsByGUIDs(gUids)
+	counts := s.store.GroupMemberCounts(gUids)
 	list := make([]*GroupDTO, 0, len(gUids))
 	for _, gUID := range gUids {
-		if g, err := s.store.GetGroupByGUID(gUID); err == nil {
-			members, _ := s.store.ListGroupMembers(gUID)
-			list = append(list, &GroupDTO{GUID: g.GUID, Name: g.Name, OwnerUID: g.OwnerUID, Announcement: g.Announcement, MemberCount: len(members), Avatar: g.Avatar})
+		g := groups[gUID]
+		if g == nil {
+			continue
 		}
+		list = append(list, &GroupDTO{GUID: g.GUID, Name: g.Name, OwnerUID: g.OwnerUID, Announcement: g.Announcement, MemberCount: counts[gUID], Avatar: g.Avatar})
 	}
 	return list, nil
 }

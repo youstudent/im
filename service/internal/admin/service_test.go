@@ -68,6 +68,13 @@ func (m *mockAdminStore) ListMessagesBefore(convID, beforeSeq int64, limit int) 
 func (m *mockAdminStore) GetUserByUID(uid int64) (*mysql.User, error) {
 	return &mysql.User{UID: uid, Nickname: "user", Account: "acc"}, nil
 }
+func (m *mockAdminStore) GetUserNames(uids []int64) map[int64]string {
+	out := make(map[int64]string, len(uids))
+	for _, u := range uids {
+		out[u] = "user"
+	}
+	return out
+}
 
 // ---- 版本发布 mock ----
 func (m *mockAdminStore) GetAdminByID(id int64) (*mysql.AdminUser, error) {

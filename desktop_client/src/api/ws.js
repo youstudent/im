@@ -139,8 +139,9 @@ function doConnect() {
     gotFrame = false
     heartbeatMiss = 0
     startHeartbeat()
-    // 重连成功：清空待确认队列（消息由服务端离线队列补发，不重复重发旧消息）
-    clearPendingAcks()
+    // 重连成功：重发待确认队列中的消息（服务端按 msg_id 幂等去重，不会重复落库/推送；
+    // 修复旧实现直接清空队列导致"消息从未到达服务端"场景下静默丢失）
+    resendPendingAcks()
     setConnectionState('connected')
     // 首帧鉴权：token 缺失（过期清理/解密失败）时先静默刷新再试，避免拿空/旧 token 去认证
     let token = await tokenStore.getAccessToken()
@@ -372,11 +373,17 @@ function checkPendingAcks() {
   })
 }
 
-// 连接建立后清空待确认队列（重连后消息由服务端离线补发，不重复重发旧消息）。
-function clearPendingAcks() {
-  pendingAcks.clear()
-  if (ackTimer) {
-    clearInterval(ackTimer)
-    ackTimer = null
-  }
+// 连接建立后重发待确认队列中的消息（审计 P0 残余修复）：
+// 消息若从未到达服务端（发送瞬间断线且 HTTP 降级也失败），服务端离线补发无从兑现，
+// 重连后逐条重发是唯一兼容手段；服务端按 msg_id 幂等去重，重复重发无副作用。
+function resendPendingAcks() {
+  if (pendingAcks.size === 0) return
+  const now = Date.now()
+  pendingAcks.forEach((entry, msgId) => {
+    entry.retries = 0
+    entry.sendAt = now
+    sendFrame('msg', entry.body)
+    console.log('[ws] 重连后重发待确认消息', msgId)
+  })
+  ensureAckTimer()
 }

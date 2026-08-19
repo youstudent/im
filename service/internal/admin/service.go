@@ -36,6 +36,7 @@ type Store interface {
 	// 群聊天记录
 	ListMessagesBefore(convID, beforeSeq int64, limit int) ([]*mysql.Message, error)
 	GetUserByUID(uid int64) (*mysql.User, error)
+	GetUserNames(uids []int64) map[int64]string // P1 优化：发送者昵称批量查
 	// 业务操作
 	DisableUser(uid int64) error
 	EnableUser(uid int64) error
@@ -391,6 +392,18 @@ func (s *Service) GetGroupMessages(gUID, beforeSeq int64, limit int) ([]*GroupMe
 	if err != nil {
 		return nil, apperr.WrapInternal("查询群聊天记录失败", err)
 	}
+	// P1 优化：发送者昵称一次批量查，替代逐条 GetUserByUID 的 N+1
+	uidSet := make(map[int64]struct{})
+	for _, m := range list {
+		if m.SenderUID > 0 {
+			uidSet[m.SenderUID] = struct{}{}
+		}
+	}
+	uids := make([]int64, 0, len(uidSet))
+	for u := range uidSet {
+		uids = append(uids, u)
+	}
+	names := s.store.GetUserNames(uids)
 	out := make([]*GroupMessageDTO, 0, len(list))
 	for _, m := range list {
 		dto := &GroupMessageDTO{
@@ -398,12 +411,9 @@ func (s *Service) GetGroupMessages(gUID, beforeSeq int64, limit int) ([]*GroupMe
 			Type: m.Type, Content: previewText(m.Type, m.Content), Extra: m.Extra,
 			Status: m.Status, CreatedAt: m.CreatedAt.Unix(),
 		}
-		// 发送者昵称（优先昵称，其次账号）
-		if u, err := s.store.GetUserByUID(m.SenderUID); err == nil && u != nil {
-			dto.SenderName = u.Nickname
-			if dto.SenderName == "" {
-				dto.SenderName = u.Account
-			}
+		// 发送者昵称（查不到时用 uid）
+		if name := names[m.SenderUID]; name != "" {
+			dto.SenderName = name
 		} else {
 			dto.SenderName = fmt.Sprintf("%d", m.SenderUID)
 		}

@@ -79,6 +79,39 @@ func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || strings.Contains(s, sub))
 }
 
+// ---- 批量查询（P1 优化接口的 mock 实现）----
+func (m *mockStore) GetUsersByUIDs(uids []int64) map[int64]*mysql.User {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64]*mysql.User, len(uids))
+	for _, uid := range uids {
+		if u, ok := m.users[uid]; ok {
+			out[uid] = u
+		}
+	}
+	return out
+}
+func (m *mockStore) GetGroupsByGUIDs(gUIDs []int64) map[int64]*mysql.Group {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64]*mysql.Group, len(gUIDs))
+	for _, g := range gUIDs {
+		if grp, ok := m.groups[g]; ok {
+			out[g] = grp
+		}
+	}
+	return out
+}
+func (m *mockStore) GroupMemberCounts(gUIDs []int64) map[int64]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64]int, len(gUIDs))
+	for _, g := range gUIDs {
+		out[g] = len(m.members[g])
+	}
+	return out
+}
+
 func (m *mockStore) AddFriend(uid, f int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

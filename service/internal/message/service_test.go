@@ -313,6 +313,17 @@ func (m *mockStore) GetLastReadSeq(uid, convID int64) (int64, error) {
 	defer m.mu.Unlock()
 	return m.readSeq[itoa(uid)+":"+itoa(convID)], nil
 }
+func (m *mockStore) GetPeerReadSeqs(pairs [][2]int64) (map[int64]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64]int64, len(pairs))
+	for _, p := range pairs {
+		if seq, ok := m.readSeq[itoa(p[0])+":"+itoa(p[1])]; ok && seq > 0 {
+			out[p[1]] = seq
+		}
+	}
+	return out, nil
+}
 func (m *mockStore) UpsertReadSeq(uid, convID, seq int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -3,6 +3,7 @@ package mysql
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -188,6 +189,39 @@ func (d *DB) GetGroupByGUID(gUID int64) (*Group, error) {
 	return g, nil
 }
 
+// GetGroupsByGUIDs 批量按群号查群（群列表场景，替代逐个 GetGroupByGUID 的 N+1）。
+// 不存在的群不在返回 map 中。
+func (d *DB) GetGroupsByGUIDs(gUIDs []int64) map[int64]*Group {
+	out := make(map[int64]*Group, len(gUIDs))
+	if len(gUIDs) == 0 {
+		return out
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT id, g_uid, name, owner_uid, announcement, member_count, avatar, conv_id, created_at FROM `groups` WHERE g_uid IN (")
+	args := make([]interface{}, 0, len(gUIDs))
+	for i, g := range gUIDs {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("?")
+		args = append(args, g)
+	}
+	sb.WriteString(")")
+	rows, err := d.Query(sb.String(), args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		g, err := scanGroup(rows)
+		if err != nil {
+			return out
+		}
+		out[g.GUID] = g
+	}
+	return out
+}
+
 // AddGroupMember 加入群成员。
 func (d *DB) AddGroupMember(gUID, uid int64, role int8) error {
 	_, err := d.Exec(`INSERT IGNORE INTO group_members (g_uid, uid, role) VALUES (?, ?, ?)`, gUID, uid, role)
@@ -252,6 +286,40 @@ func (d *DB) ListGroupMembers(gUID int64) ([]int64, error) {
 		list = append(list, uid)
 	}
 	return list, rows.Err()
+}
+
+// GroupMemberCounts 批量统计多个群的成员数（群列表场景，
+// 替代逐群 ListGroupMembers 的 N+1）。无成员的群不在返回 map 中。
+func (d *DB) GroupMemberCounts(gUIDs []int64) map[int64]int {
+	out := make(map[int64]int, len(gUIDs))
+	if len(gUIDs) == 0 {
+		return out
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT g_uid, COUNT(1) FROM group_members WHERE g_uid IN (")
+	args := make([]interface{}, 0, len(gUIDs))
+	for i, g := range gUIDs {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("?")
+		args = append(args, g)
+	}
+	sb.WriteString(") GROUP BY g_uid")
+	rows, err := d.Query(sb.String(), args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var gUID int64
+		var n int
+		if err := rows.Scan(&gUID, &n); err != nil {
+			return out
+		}
+		out[gUID] = n
+	}
+	return out
 }
 
 // ListUserGroups 列出某用户加入的群 g_uid。
