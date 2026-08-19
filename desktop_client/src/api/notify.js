@@ -2,8 +2,8 @@
  * 通知模块：新消息桌面通知 + 提示音。
  *
  * 设置项持久化在 localStorage（UI 偏好层，秒级生效，无需入库）：
- *  - workchat:notify:desktop  桌面通知开关（默认开）
- *  - workchat:notify:sound    提示音开关（默认开）
+ *  - workchat:notify:desktop  桌面通知开关（默认关）
+ *  - workchat:notify:sound    提示音开关（默认关）
  *
  * 桌面通知：Electron 环境走主进程原生 Notification（点击唤起窗口）；
  * 浏览器环境降级为 Web Notification API。
@@ -30,14 +30,15 @@ function writeFlag(key, value) {
 }
 
 export const notifySettings = {
+  // 未手动设置过的账户默认关闭通知/提示音（避免装机即打扰）；已设置过的保留用户选择
   desktopEnabled() {
-    return readFlag(KEY_DESKTOP, true)
+    return readFlag(KEY_DESKTOP, false)
   },
   setDesktop(enabled) {
     writeFlag(KEY_DESKTOP, !!enabled)
   },
   soundEnabled() {
-    return readFlag(KEY_SOUND, true)
+    return readFlag(KEY_SOUND, false)
   },
   setSound(enabled) {
     writeFlag(KEY_SOUND, !!enabled)

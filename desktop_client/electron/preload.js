@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   notification: {
     show: (title, body) => ipcRenderer.invoke('notify:show', { title, body }),
   },
+  // 任务栏图标未读交互：set 同步未读数角标（Windows 覆盖图标 / macOS Dock），flash 新消息时闪烁任务栏
+  badge: {
+    set: (count) => ipcRenderer.invoke('app:badge:set', { count }),
+    flash: () => ipcRenderer.invoke('app:badge:flash'),
+  },
   // 安全令牌存储（safeStorage 系统级加密）
   secureStorage: {
     isEncryptionAvailable: () => ipcRenderer.invoke('storage:is-encryption-available'),
@@ -70,6 +75,8 @@ contextBridge.exposeInMainWorld('store', {
       ipcRenderer.invoke('store:messages:set-sync-state', { localId, state, ...extra }),
     listPending: () => ipcRenderer.invoke('store:messages:list-pending'),
     claimPending: (convId, content) => ipcRenderer.invoke('store:messages:claim-pending', { convId, content }),
+    // 语音已播放标记（未读红点持久化在消息表 voice_played 字段）
+    markVoicePlayed: (serverId) => ipcRenderer.invoke('store:messages:mark-voice-played', { serverId }),
     removeByConv: (convId) => ipcRenderer.invoke('store:messages:remove-by-conv', { convId }),
   },
   kv: {

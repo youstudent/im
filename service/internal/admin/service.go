@@ -434,6 +434,9 @@ func previewText(t int8, content string) string {
 		if isAudioContent(content) {
 			return "[语音]"
 		}
+		if isVideoContent(content) {
+			return "[视频]"
+		}
 		return "[文件]"
 	case 4:
 		return "[语音]"
@@ -452,6 +455,22 @@ var adminAudioExts = map[string]bool{
 
 // isAudioContent 判断 FILE 消息 content（资源 URL）是否音频文件（按路径后缀识别）。
 func isAudioContent(content string) bool {
+	return adminAudioExts[adminContentExt(content)]
+}
+
+// adminVideoExts 视频扩展名集合（与消息服务 videoExts 一致；音频优先判定）。
+var adminVideoExts = map[string]bool{
+	".mp4": true, ".mov": true, ".avi": true, ".mkv": true,
+	".wmv": true, ".flv": true, ".3gp": true, ".m4v": true,
+}
+
+// isVideoContent 判断 FILE 消息 content（资源 URL）是否视频文件（按路径后缀识别）。
+func isVideoContent(content string) bool {
+	return adminVideoExts[adminContentExt(content)]
+}
+
+// adminContentExt 提取 content（资源 URL）路径中的扩展名（小写含点，无后缀返回空串）。
+func adminContentExt(content string) string {
 	p := content
 	if u, err := url.Parse(content); err == nil && u.Path != "" {
 		p = u.Path
@@ -462,9 +481,9 @@ func isAudioContent(content string) bool {
 		p = p[i+1:]
 	}
 	if i := strings.LastIndex(p, "."); i >= 0 {
-		return adminAudioExts[strings.ToLower(p[i:])]
+		return strings.ToLower(p[i:])
 	}
-	return false
+	return ""
 }
 
 // ---- 客户端版本发布（检查更新） ----

@@ -68,6 +68,7 @@ function register() {
   ))
   ipcMain.handle('store:messages:list-pending', safe(() => messageRepo.listPending()))
   ipcMain.handle('store:messages:claim-pending', safe((arg) => messageRepo.claimPending(arg?.convId, arg?.content)))
+  ipcMain.handle('store:messages:mark-voice-played', safe((arg) => messageRepo.markVoicePlayed(arg?.serverId)))
   // 删除某会话全部消息（退群清理）
   ipcMain.handle('store:messages:remove-by-conv', safe((arg) => messageRepo.deleteByConv(arg?.convId)))
 

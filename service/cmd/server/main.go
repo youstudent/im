@@ -212,6 +212,8 @@ return redis.call('INCR', KEYS[1])
 	authSvc.SetPendingReqCheck(socialSvc.HasPendingFriendRequest)
 	// 群聊多路分发：把 social 的群成员查询注入网关适配器
 	adapter.SetGroupMembers(socialSvc.GetGroupMembers)
+	// 通话信令好友校验：仅好友间可互打语音电话，防对任意用户发起呼叫骚扰
+	wsServer.SetFriendCheck(socialSvc.AreFriends)
 	// 群聊同步会话：把群成员查询注入消息服务，供发送群消息时更新每个成员会话的最后消息
 	msgSvc.SetGroupMembers(socialSvc.GetGroupMembers)
 	// 注入系统消息推送能力：按 uid 推送 msg.push 帧（群创建系统消息等多接收方场景）

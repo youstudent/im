@@ -63,7 +63,7 @@ function accountDbPath(uid) {
   return path.join(storageRoot(), 'accounts', String(uid), 'workchat.db')
 }
 
-const CURRENT_SCHEMA_VERSION = 2
+const CURRENT_SCHEMA_VERSION = 3
 
 let db = null // 当前会话的 DB 句柄
 let sessionUid = null // 当前会话账户 uid
@@ -172,6 +172,15 @@ function migrate(next) {
   if (version < 2) {
     // v2：敏感会话不落盘标记（仅存标记，不存内容；开启时由仓储层清除该会话消息）
     next.exec('ALTER TABLE conversations ADD COLUMN no_persist INTEGER NOT NULL DEFAULT 0')
+    next
+      .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run('schema_version', '2')
+    version = 2
+  }
+
+  if (version < 3) {
+    // v3：语音已播放标记（未读红点持久化从 localStorage 迁入消息表，随消息同库同生命周期）
+    next.exec('ALTER TABLE messages ADD COLUMN voice_played INTEGER NOT NULL DEFAULT 0')
     next
       .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
       .run('schema_version', String(CURRENT_SCHEMA_VERSION))

@@ -243,6 +243,30 @@ func (h *Hub) deliverLocal(targetUID int64, frame *Frame) bool {
 	return true
 }
 
+// PushLive 在线实时投递：本节点直发 / 跨节点路由；目标离线返回 false（不入离线队列）。
+// 用于时效性强的控制信令（如通话信令）：过期的呼叫帧重连后补发已无意义，反而骚扰用户。
+func (h *Hub) PushLive(targetUID int64, frame *Frame) bool {
+	if h.deliverLocal(targetUID, frame) {
+		return true
+	}
+	node := h.rdb.Get(context.Background(), presenceKey(targetUID)).Val()
+	if node == "" || node == h.node {
+		return false
+	}
+	data, err := json.Marshal(&RouteMsg{TargetUID: targetUID, Frame: frame})
+	if err != nil {
+		return false
+	}
+	_ = h.rdb.Publish(context.Background(), nodeChannel(node), data)
+	return true
+}
+
+// isBusy 查询用户是否通话中（忙线键存在即忙，由 call.go 维护）。
+func (h *Hub) isBusy(uid int64) bool {
+	n, err := h.rdb.Exists(context.Background(), callBusyKey(uid)).Result()
+	return err == nil && n > 0
+}
+
 // Broadcast 向多个目标广播（群聊/好友在线状态）。
 func (h *Hub) Broadcast(uids []int64, frame *Frame) {
 	for _, uid := range uids {

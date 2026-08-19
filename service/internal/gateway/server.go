@@ -32,6 +32,8 @@ type Server struct {
 	handler   MessageHandler
 	pongWait  time.Duration // 读超时：客户端在此间隔内无任何帧则判定失联踢线
 	writeWait time.Duration // 写超时
+	// friendCheck 好友关系校验（通话信令防骚扰）；nil 时不校验
+	friendCheck func(from, to int64) bool
 }
 
 // MessageHandler 业务回调：由服务端装配时注入，处理业务帧并返回需要投递的帧。
@@ -68,6 +70,9 @@ func NewServer(rdb *redis.Client, jwtMgr *jwt.Manager, handler MessageHandler, n
 
 // Hub 返回连接注册中心。
 func (s *Server) Hub() *Hub { return s.hub }
+
+// SetFriendCheck 注入好友关系校验（social 服务就绪后调用），用于通话信令转发前鉴权。
+func (s *Server) SetFriendCheck(fn func(from, to int64) bool) { s.friendCheck = fn }
 
 // HandleWS 升级为 WebSocket 并进入消息循环。
 func (s *Server) HandleWS(c *gin.Context) {
@@ -154,7 +159,8 @@ func (cl *client) auth() bool {
 // readLoop 读取客户端帧并分发。实现心跳检测（读超时踢线）：
 // 客户端在 pongWait 内未发送任何帧（含 heartbeat），则判定失联，断开连接。
 func (cl *client) readLoop() {
-	cl.conn.SetReadLimit(64 * 1024)
+	// 通话信令（SDP/ICE）帧较大，读上限从 64KB 提到 128KB
+	cl.conn.SetReadLimit(128 * 1024)
 	_ = cl.conn.SetReadDeadline(time.Now().Add(cl.srv.pongWait))
 	for {
 		_, data, err := cl.conn.ReadMessage()
@@ -196,6 +202,8 @@ func (cl *client) handle(f *Frame) {
 		}
 	case FrameRead:
 		cl.handleRead(f)
+	case FrameCall:
+		cl.handleCall(f)
 	default:
 		// typing 等暂不处理
 	}

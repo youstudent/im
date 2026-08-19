@@ -38,6 +38,7 @@ type PresignReq struct {
 	Type        string `json:"type"`         // image / file / voice
 	Size        int64  `json:"size"`         // 文件大小（字节）
 	ContentType string `json:"content_type"` // 文件 MIME 类型（与上传时的 Content-Type 一致，缺省 application/octet-stream）
+	Duration    int64  `json:"duration"`     // 语音时长（秒，仅 voice 类型上报；>60s 拒绝）
 }
 
 // 上传安全约束（审计 P1）：
@@ -65,7 +66,19 @@ var imageExtWhitelist = map[string]bool{
 	".webp": true, ".heic": true, ".heif": true, ".tiff": true, ".ico": true,
 }
 
-const maxUserUploadSize = 200 << 20 // 用户端单文件上限 200MB
+// voiceExtWhitelist 语音类型上传允许的扩展名（与桌面端音频后缀识别一致）。
+var voiceExtWhitelist = map[string]bool{
+	".webm": true, ".m4a": true, ".aac": true, ".mp3": true,
+	".wav": true, ".ogg": true, ".flac": true,
+}
+
+// 用户端分类上传上限：图片 20MB / 语音 10MB 且时长≤60s / 普通文件 200MB。
+const (
+	maxUserUploadSize   = 200 << 20 // 普通文件单文件上限 200MB
+	maxImageUploadSize  = 20 << 20  // 图片上限 20MB
+	maxVoiceUploadSize  = 10 << 20  // 语音大小上限 10MB
+	maxVoiceDurationSec = 60        // 语音时长上限 60 秒
+)
 
 var adminExtWhitelist = map[string]bool{
 	".exe": true, ".msi": true, ".dmg": true, ".zip": true, ".blockmap": true,
@@ -134,18 +147,40 @@ func (h *Handler) presignFor(c *gin.Context, owner, dir string, isAdmin bool) {
 			return
 		}
 	} else {
-		// 图片类型仅允许图片扩展名（与桌面端白名单对齐）
-		if typ == "image" && !imageExtWhitelist[ext] {
-			resp.Fail(c, apperr.BadRequest("仅支持上传图片文件（jpg/png/gif/webp 等）"))
-			return
-		}
 		if dangerousExt[ext] {
 			resp.Fail(c, apperr.BadRequest("不支持上传该类型文件"))
 			return
 		}
-		if req.Size <= 0 || req.Size > maxUserUploadSize {
-			resp.Fail(c, apperr.BadRequest("文件大小超限（上限 200MB）"))
-			return
+		switch typ {
+		case "image":
+			// 图片类型仅允许图片扩展名（与桌面端白名单对齐）
+			if !imageExtWhitelist[ext] {
+				resp.Fail(c, apperr.BadRequest("仅支持上传图片文件（jpg/png/gif/webp 等）"))
+				return
+			}
+			if req.Size <= 0 || req.Size > maxImageUploadSize {
+				resp.Fail(c, apperr.BadRequest("图片大小超限（上限 20MB）"))
+				return
+			}
+		case "voice":
+			// 语音：仅允许音频扩展名，时长≤60s，大小≤10MB
+			if !voiceExtWhitelist[ext] {
+				resp.Fail(c, apperr.BadRequest("仅支持上传语音文件（webm/m4a/mp3/wav 等）"))
+				return
+			}
+			if req.Duration > maxVoiceDurationSec {
+				resp.Fail(c, apperr.BadRequest("语音时长超限（最长 60 秒）"))
+				return
+			}
+			if req.Size <= 0 || req.Size > maxVoiceUploadSize {
+				resp.Fail(c, apperr.BadRequest("语音大小超限（上限 10MB）"))
+				return
+			}
+		default:
+			if req.Size <= 0 || req.Size > maxUserUploadSize {
+				resp.Fail(c, apperr.BadRequest("文件大小超限（上限 200MB）"))
+				return
+			}
 		}
 	}
 	// objectKey: dir/owner/时间戳_随机.ext

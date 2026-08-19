@@ -1,12 +1,15 @@
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated } from 'vue'
 import SearchChatHistoryModal from './SearchChatHistoryModal.vue'
+import CreateGroupModal from './CreateGroupModal.vue'
 import { messageApi } from '../api/message'
 import { wsClient } from '../api/ws'
 import { friendApi, groupApi } from '../api/social'
 import { fileApi } from '../api/file'
 import { localdb } from '../api/localdb'
 import { notifyNewMessage } from '../api/notify'
+import CallWindow from './CallWindow.vue'
+import { callState, startCall, onCallEnded } from '../api/call'
 
 // 消息类型常量（与后端一致）：1 文本 / 2 图片 / 3 文件 / 4 语音 / 5 视频 / 6 系统
 const MSG_TYPE = { TEXT: 1, IMAGE: 2, FILE: 3, VOICE: 4, VIDEO: 5, SYSTEM: 6 }
@@ -25,7 +28,7 @@ const props = defineProps({
     default: null,
   },
 })
-const emit = defineEmits(['update:showSearchHistory', 'close-search', 'update:chat-badge'])
+const emit = defineEmits(['update:showSearchHistory', 'close-search', 'update:chat-badge', 'request-add-friend', 'group-created'])
 
 const message = ref('')
 const muteDnd = ref(true)
@@ -64,7 +67,13 @@ const conversations = ref([])
 const totalUnread = computed(() =>
   conversations.value.reduce((sum, c) => sum + (c.unread || 0), 0)
 )
-watch(totalUnread, (n) => emit('update:chat-badge', n), { immediate: true })
+watch(totalUnread, (n) => {
+  emit('update:chat-badge', n)
+  // 任务栏图标角标：未读数同步给主进程（Windows 覆盖图标 / macOS Dock 徽章，0 清除）
+  try {
+    window.electronAPI?.badge?.set(n)
+  } catch {}
+}, { immediate: true })
 
 // ---- 状态 ----
 const activeId = ref(conversations.value[0]?.id || '') // 当前选中的会话 id
@@ -159,6 +168,139 @@ watch(activeId, () => {
   editingGroupName.value = false
   editingAnnouncement.value = false
 })
+
+// ===== 语音通话 =====
+// 通话状态机由 api/call.js 全局维护，此处仅做入口接线与通话记录落库
+
+// 语音通话入口可用性：仅单聊可拨打（群通话本期不支持）
+const canVoiceCall = computed(() => hasActiveContact.value && !isGroupChat.value)
+
+function startVoiceCall() {
+  if (!hasActiveContact.value) return
+  if (isGroupChat.value) {
+    showToast('暂不支持群语音通话', 'info')
+    return
+  }
+  if (callState.status !== 'idle') {
+    showToast('当前有通话正在进行', 'info')
+    return
+  }
+  if (!wsClient.isConnected()) {
+    showToast('服务器未连接，无法发起通话', 'error')
+    return
+  }
+  startCall({
+    uid: currentContact.value.targetId,
+    name: currentContact.value.name,
+    avatar: currentContact.value.avatar,
+    color: currentContact.value.color,
+    convId: currentContact.value.id,
+  })
+}
+
+// 视频通话：本期占位入口，后续迭代开放
+function startVideoCall() {
+  showToast('视频通话暂未开放', 'info')
+}
+
+// 来电时从会话列表补全对方展示信息（昵称/头像/会话定位），无匹配时由 UI 展示默认占位
+watch(
+  () => callState.status,
+  (st) => {
+    if (st !== 'incoming' || !callState.peer || !callState.peer.uid) return
+    const conv = conversations.value.find(
+      (c) => c.type !== 'group' && String(c.targetId) === String(callState.peer.uid)
+    )
+    if (conv) {
+      callState.peer = {
+        ...callState.peer,
+        name: conv.name,
+        avatar: conv.avatar,
+        color: conv.color,
+        convId: conv.id,
+      }
+    }
+  }
+)
+
+// 通话结束：插入通话记录（本地系统消息，不发送服务端，双端各自记录各自视角）
+onCallEnded((info) => insertCallLog(info))
+
+function formatCallDuration(sec) {
+  const s = Math.max(0, Number(sec) || 0)
+  const hh = Math.floor(s / 3600)
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
+// 通话记录文案：按结果与方向（out 拨出方 / in 被叫方）区分视角
+function callLogText(info) {
+  switch (info.result) {
+    case 'completed':
+      return `语音通话 ${formatCallDuration(info.duration)}`
+    case 'missed':
+      return info.direction === 'in' ? '未接语音通话' : '对方无应答'
+    case 'declined':
+      return info.direction === 'out' ? '对方已拒绝' : '已拒接语音通话'
+    case 'cancelled':
+      return info.direction === 'out' ? '已取消语音通话' : '对方取消了呼叫'
+    case 'busy':
+      return '对方正在通话中'
+    case 'offline':
+      return '对方不在线，呼叫未接通'
+    default:
+      return '语音通话未接通'
+  }
+}
+
+function insertCallLog(info) {
+  const convId = info.peer && info.peer.convId
+  if (!convId) return
+  const conv = conversations.value.find((c) => c.id === convId)
+  if (!conv) return
+  const createdAt = Math.floor(Date.now() / 1000)
+  const text = callLogText(info)
+  const msg = {
+    id: `call-${info.callId}`,
+    type: 'in', // 行样式占位；系统消息按 isSystem 居中灰字渲染
+    msgType: MSG_TYPE.SYSTEM,
+    isSystem: true,
+    text,
+    extra: { call: 'voice', result: info.result, duration: Number(info.duration) || 0 },
+    status: 0,
+    createdAt,
+    time: formatMsgTime(createdAt),
+    server: true,
+  }
+  conv.messages = conv.messages ?? []
+  conv.messages.push(msg)
+  // 会话列表摘要统一 [语音通话]（messagePreview 识别 extra.call）
+  conv.lastMessage = '[语音通话]'
+  conv.lastMsgTime = createdAt
+  conv.time = formatConvTime(createdAt)
+  if (String(activeId.value) === String(conv.id)) scrollToBottom()
+  reorderConversations()
+  // 本地落库：server_id 带 call- 前缀不会与雪花 ID 冲突；sender_uid=0 重载后仍渲染为系统消息
+  const realConvId = realConvMap.value[conv.id]
+  if (localdb.available() && realConvId && !noPersistSet.value.has(String(realConvId))) {
+    localdb.messages.upsert([
+      {
+        server_id: `call-${info.callId}`,
+        conv_id: String(realConvId),
+        seq: 0,
+        sender_uid: '0',
+        sender_name: '',
+        type: MSG_TYPE.SYSTEM,
+        content: text,
+        extra: JSON.stringify(msg.extra),
+        status: 0,
+        created_at: createdAt,
+      },
+    ])
+    localdb.conversations.bump(String(realConvId), '[语音通话]', createdAt)
+  }
+}
 
 // 是否为群聊（根据会话 type 判断）
 const isGroup = computed(() => currentContact.value.type === 'group')
@@ -1057,7 +1199,7 @@ function isHiddenLeaveMsg(m) {
 }
 
 // 把服务端消息映射为本地面板消息结构
-function mapServerMessage(m, convId) {
+function mapServerMessage(m, convId, flags = {}) {
   const isMine = m.sender_uid === meUid()
   // 解析 extra（图片/文件元数据），容错
   let extra = {}
@@ -1099,6 +1241,7 @@ function mapServerMessage(m, convId) {
     createdAt: m.created_at, // 原始 unix 秒，用于时间分组
     time: formatMsgTime(m.created_at),
     server: true,
+    voicePlayed: !!flags.voicePlayed, // 语音已播放标记（本地库加载时传入，红点状态随消息恢复）
   }
 }
 
@@ -1154,8 +1297,12 @@ function formatConvTime(unixSec) {
 // 会话列表摘要预览：图片/文件消息显示类型占位，文本截断。
 function messagePreview(m) {
   if (!m) return ''
+  // 语音通话记录：摘要统一 [语音通话]
+  if (m.extra && m.extra.call === 'voice') return '[语音通话]'
   // 音频后缀的文件消息（录音产物）按语音展示，与气泡渲染保持一致
   if (isAudioMsg(m)) return '[语音]'
+  // 视频后缀的文件消息展示 [视频]，与后端 convPreview 一致
+  if (isVideoMsg(m)) return '[视频]'
   // 非文本类型显示类型占位，与后端 convPreview 一致；避免会话列表展示资源 URL
   if (m.msgType && m.msgType !== MSG_TYPE.TEXT) return msgTypeLabel(m.msgType)
   const text = m.text || ''
@@ -1390,6 +1537,11 @@ function applyConvList(list) {
         real.time = ph.time
         real.lastMsgTime = ph.lastMsgTime
       }
+      // 占位会话的暂存附件迁移到真实会话键，避免首条消息发出后暂存项丢失
+      if (stagedFilesMap.value[activeId.value]) {
+        stagedFilesMap.value[real.id] = stagedFilesMap.value[activeId.value]
+        delete stagedFilesMap.value[activeId.value]
+      }
       activeId.value = real.id
     }
   }
@@ -1410,7 +1562,65 @@ function applyConvList(list) {
     if (c.convId && c.type !== 'group' && c.peerReadSeq) {
       readCursorMap.value[c.convId] = Number(c.peerReadSeq) || 0
     }
+    // 乐观预览还原：该会话有附件正在上传时，用乐观预览覆盖本地/服务端旧摘要，
+    // 避免上传窗口内切页/刷新导致 [视频]/[语音] 变回 [文件]
+    const op = uploadingPreviewMap.value[String(c.convId)] || uploadingPreviewMap.value[String(c.id)]
+    if (op && Number(op.time) >= (Number(c.lastMsgTime) || 0)) {
+      c.lastMessage = op.preview
+    }
   })
+  healMediaPreviews(list)
+}
+
+// 存量摘要自愈：录音/视频以 FILE(type=3) 发出，服务端/旧本地摘要存为 [文件]；
+// 用本地库最后一条消息识别音频/视频并纠正为 [语音]/[视频]（同步修本地库）。
+// 注：服务端旧数据仍会下发 [文件] 覆盖本地，此处每次列表应用时重新纠正保证展示正确。
+function healMediaPreviews(list) {
+  if (!localdb.available()) return
+  for (const c of list || []) {
+    if (c.lastMessage !== '[文件]' || !c.convId) continue
+    healOneConvPreview(c, 0)
+  }
+}
+
+// 单会话摘要自愈：取本地库最近若干条已同步行判定。
+// 优先匹配列表项最后消息时间（±2s）对应的行，避免被 pending/更早行误导；
+// 本地数据未追平（WS 落库竞态/乐观消息未发出）时延迟重试，覆盖“偶尔显示 [文件]”的竞态窗口。
+function healOneConvPreview(c, attempt) {
+  const convIdStr = String(c.convId)
+  localdb.messages.list(convIdStr, { limit: 10 }).then((rows) => {
+    const synced = (rows || []).filter((r) => Number(r.seq) > 0) // pending 行不参与摘要判定
+    if (!synced.length) return retryHeal(c, attempt)
+    const targetTime = Number(c.lastMsgTime) || 0
+    // 优先取与列表最后消息时间匹配的行；无匹配时退化为最新已同步行
+    let last = null
+    if (targetTime > 0) last = synced.find((r) => Math.abs(Number(r.created_at) - targetTime) <= 2) || null
+    if (!last) last = synced[synced.length - 1]
+    let extra = {}
+    try {
+      extra = last.extra ? JSON.parse(last.extra) : {}
+    } catch {}
+    const pseudo = { msgType: Number(last.type) || 1, extra }
+    let fixed = ''
+    if (isAudioMsg(pseudo)) fixed = '[语音]'
+    else if (isVideoMsg(pseudo)) fixed = '[视频]'
+    if (fixed) {
+      c.lastMessage = fixed
+      localdb.conversations.upsert([{ id: convIdStr, last_msg: fixed }])
+      return
+    }
+    // 本地最新行与列表时间对不上：本地数据尚未追平，稍后重试
+    if (targetTime > 0 && Math.abs(Number(last.created_at) - targetTime) > 2) retryHeal(c, attempt)
+  }).catch(() => {})
+}
+
+// 自愈重试：最多 3 次；期间摘要已被其它路径（WS/发送）更新则停止
+function retryHeal(c, attempt) {
+  if (attempt >= 2) return
+  setTimeout(() => {
+    if (c.lastMessage !== '[文件]') return
+    healOneConvPreview(c, attempt + 1)
+  }, attempt === 0 ? 800 : 2000)
 }
 
 // 会话行（网络/本地库字段同名）→ 列表项（展示资料取自联系人缓存）
@@ -1473,14 +1683,24 @@ function parseExtra(extra) {
 // 命中直接换源；未命中后台下载入缓存，完成后回填 cacheUrl，后续展示不再重复下载。
 // 不落盘（敏感）会话的媒体不进文件缓存。
 function hydrateMediaCache(msgs, convId) {
-  if (!localdb.available()) return
-  if (convId && noPersistSet.value.has(String(convId))) return
+  // 不落盘（敏感）会话的媒体不进文件缓存，但语音时长仍可直接探测远端地址
+  const useCache = localdb.available() && !(convId && noPersistSet.value.has(String(convId)))
   for (const m of msgs || []) {
     const isMedia = m.msgType === MSG_TYPE.IMAGE || m.msgType === MSG_TYPE.FILE || m.msgType === MSG_TYPE.VOICE
     const url = m.extra && m.extra.url
-    if (!isMedia || !url || m.extra.cacheUrl) continue
+    if (!isMedia || !url) continue
+    if (!useCache) {
+      probeVoiceDuration(m)
+      continue
+    }
+    if (m.extra.cacheUrl) {
+      probeVoiceDuration(m)
+      continue
+    }
     localdb.fileCache.resolve(url, m.extra.key || '', m.extra.name || '').then((r) => {
       if (r && r.hit && r.cacheUrl && m.extra) m.extra.cacheUrl = r.cacheUrl
+      // 缓存就绪后再探测时长：避免对远端地址重复下载 metadata
+      probeVoiceDuration(m)
     })
   }
 }
@@ -1530,7 +1750,8 @@ function mapLocalMessage(r, convId) {
       status: r.status,
       created_at: r.created_at,
     },
-    convId
+    convId,
+    { voicePlayed: !!r.voice_played } // 本地库语音已播放标记 → 红点状态随消息恢复
   )
 }
 
@@ -1546,8 +1767,8 @@ async function send() {
     autoResizeInput()
   }
   if (staged.length) {
-    // 先清空暂存区再逐个发送，防止异步期间重复提交
-    stagedFiles.value = []
+    // 先清空当前会话暂存区再逐个发送，防止异步期间重复提交
+    delete stagedFilesMap.value[activeId.value]
     for (const item of staged) sendStagedMedia(item)
   }
 }
@@ -1567,9 +1788,6 @@ async function sendMessage(type, content, extra, options = {}) {
     const convId = realConvMap.value[contact.id] || 0
     const convType = contact.type === 'group' ? 2 : 1
     const extraStr = extra ? JSON.stringify(extra) : ''
-
-    // 会话列表展示文案：文本直接用内容；非文本用类型占位（与后端 convPreview 一致）
-    const previewText = type === MSG_TYPE.TEXT ? content : msgTypeLabel(type)
 
     // 乐观渲染
     contact.messages = contact.messages ?? []
@@ -1605,7 +1823,8 @@ async function sendMessage(type, content, extra, options = {}) {
     }
     optimistic.localId = localId || null
     contact.messages.push(optimistic)
-    contact.lastMessage = previewText
+    // 会话列表摘要：统一走 messagePreview（音频后缀的文件识别为 [语音]，与气泡/后端一致）
+    contact.lastMessage = messagePreview(optimistic)
     contact.lastMsgTime = optimistic.createdAt
     contact.time = formatConvTime(optimistic.createdAt)
     scrollToBottom()
@@ -1686,7 +1905,7 @@ async function sendMessage(type, content, extra, options = {}) {
 
   // mock 兜底
   contact.messages = contact.messages ?? []
-  contact.messages.push({
+  const mockMsg = {
     id: `${contact.id}-out-${Date.now()}`,
     type: 'out',
     msgType: type,
@@ -1696,9 +1915,9 @@ async function sendMessage(type, content, extra, options = {}) {
     extra: extra || {},
     readAt: '刚刚 已读',
     time: '刚刚',
-  })
-  const previewText = type === MSG_TYPE.TEXT ? content : msgTypeLabel(type)
-  contact.lastMessage = previewText
+  }
+  contact.messages.push(mockMsg)
+  contact.lastMessage = messagePreview(mockMsg)
 }
 
 // 选择图片：白名单/大小校验后暂存到输入区（点击发送才真正上传，参考微信）
@@ -1717,44 +1936,69 @@ async function sendFile() {
 }
 
 // ===== 附件暂存区：图片/文件选择或拖入后先在输入框上方展示，点击发送才调真实上传接口 =====
-const stagedFiles = ref([]) // [{ id, file, kind, previewUrl, name, size }]
+// 按会话隔离：暂存项绑定当前会话 id，切换会话互不影响，切回时恢复
+const stagedFilesMap = ref({}) // { [会话id]: [{ id, file, kind, previewUrl, name, size }] }
+const stagedFiles = computed(() => stagedFilesMap.value[activeId.value] || [])
 
-// 暂存附件：统一校验白名单/大小（toastSkip：按钮选择单文件场景静默跳过非法项）
-function stageFiles(files, { toastSkip = false } = {}) {
+// 当前会话的暂存列表（无则创建）；无激活会话时返回 null
+function currentStagedList() {
+  const key = activeId.value
+  if (!key) return null
+  if (!stagedFilesMap.value[key]) stagedFilesMap.value[key] = []
+  return stagedFilesMap.value[key]
+}
+
+// 暂存附件：统一校验白名单/大小（toastSkip：按钮选择单文件场景静默跳过非法项；duration：录音时长；voice：录音产物按语音类型处理）
+function stageFiles(files, { toastSkip = false, duration = 0, voice = false } = {}) {
   let added = 0
   for (const f of files || []) {
-    if (f.size > MAX_UPLOAD_SIZE) {
-      if (toastSkip) showToast('文件大小超限（上限 200MB）', 'error')
-      else showToast(`「${f.name}」大小超限（上限 200MB），已跳过`, 'error')
-      continue
-    }
+    // 类型判定：录音产物（voice=true）按语音处理，其余按图片/文件白名单
     let kind = ''
-    if (isAllowedImage(f.name)) kind = 'image'
+    if (voice && AUDIO_EXT_RE.test(f.name)) kind = 'voice'
+    else if (isAllowedImage(f.name)) kind = 'image'
     else if (isAllowedFile(f.name)) kind = 'file'
     if (!kind) {
       if (toastSkip) showToast('不支持发送该类型文件，仅支持图片与文档/压缩包/音视频等常见格式', 'error')
       else showToast(`不支持的文件类型：${f.name}`, 'error')
       continue
     }
-    stagedFiles.value.push({
+    // 分类大小限制：图片 20MB / 语音 10MB / 普通文件 200MB（后端同规则拒绝，前置拦截免无效上传）
+    const limit = kind === 'image' ? IMAGE_MAX_SIZE : kind === 'voice' ? VOICE_MAX_SIZE : MAX_UPLOAD_SIZE
+    if (f.size > limit) {
+      const limitText = kind === 'image' ? '20MB' : kind === 'voice' ? '10MB' : '200MB'
+      const typeName = kind === 'image' ? '图片' : kind === 'voice' ? '语音' : '文件'
+      if (toastSkip) showToast(`${typeName}大小超限（上限 ${limitText}）`, 'error')
+      else showToast(`「${f.name}」大小超限（上限 ${limitText}），已跳过`, 'error')
+      continue
+    }
+    const list = currentStagedList()
+    if (!list) {
+      if (toastSkip) showToast('请先选择会话再添加附件', 'error')
+      continue
+    }
+    list.push({
       id: `stg-${Date.now()}-${Math.floor(Math.random() * 1000)}-${added}`,
       file: f,
       kind,
       previewUrl: kind === 'image' ? URL.createObjectURL(f) : '',
       name: f.name,
       size: f.size,
+      duration: duration || 0, // 录音产物携带时长，随 extra 发出供气泡展示
     })
     added++
   }
   if (!toastSkip && added > 1) showToast(`已添加 ${added} 个附件，点击发送发出`, 'info')
 }
 
-// 移除暂存附件（释放预览 ObjectURL）
+// 移除暂存附件（释放预览 ObjectURL；列表清空后移除会话键）
 function removeStaged(id) {
-  const idx = stagedFiles.value.findIndex((s) => s.id === id)
+  const list = stagedFilesMap.value[activeId.value]
+  if (!list) return
+  const idx = list.findIndex((s) => s.id === id)
   if (idx < 0) return
-  const [item] = stagedFiles.value.splice(idx, 1)
+  const [item] = list.splice(idx, 1)
   if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
+  if (!list.length) delete stagedFilesMap.value[activeId.value]
 }
 
 // ===== 语音录制：点击开始 / 再点结束，录音产物进附件暂存区（随发送一起上传，webm 在文件白名单内）=====
@@ -1762,11 +2006,17 @@ const recording = ref(false)
 let mediaRecorder = null
 let recordChunks = []
 let recordStream = null
+let recordStartedAt = 0 // 录音开始时间：结束时计算时长随 extra 发出
+let recordStopTimer = null // 60s 上限自动停止定时器
 
 async function toggleRecordVoice() {
   // 录音中：再点一次结束
   if (recording.value) {
     recording.value = false
+    if (recordStopTimer) {
+      clearTimeout(recordStopTimer)
+      recordStopTimer = null
+    }
     mediaRecorder?.stop()
     return
   }
@@ -1806,15 +2056,31 @@ async function toggleRecordVoice() {
       return
     }
     const ext = mime.includes('mp4') || mime.includes('aac') ? 'm4a' : 'webm'
+    // 时长夹在 1~60s：定时器到点自动停止，此处兼容微小的计时漂移，避免后端 60s 校验拒绝
+    const durSec = Math.max(1, Math.min(VOICE_MAX_SECONDS, Math.round((Date.now() - recordStartedAt) / 1000)))
     const d = new Date()
     const pad = (n) => String(n).padStart(2, '0')
     const name = `语音_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${ext}`
-    stageFiles([new File([blob], name, { type: mime })], { toastSkip: true })
+    stageFiles([new File([blob], name, { type: mime })], { toastSkip: true, duration: durSec, voice: true })
     showToast('录音已加入暂存，点击发送发出', 'info')
   }
   mediaRecorder.start()
+  recordStartedAt = Date.now()
   recording.value = true
+  // 60s 上限：到点自动结束录音并提示（与后端语音时长校验一致）
+  recordStopTimer = setTimeout(() => {
+    recordStopTimer = null
+    if (recording.value) {
+      showToast(`录音已达 ${VOICE_MAX_SECONDS} 秒上限，已自动结束`, 'info')
+      toggleRecordVoice()
+    }
+  }, VOICE_MAX_SECONDS * 1000)
 }
+
+// 乐观预览保护：附件上传期间（大文件可达数十秒）消息尚未落库，列表重建
+// （切页/事件刷新）会用本地库/服务端的旧摘要覆盖内存中的乐观预览（如 [视频] 变回 [文件]），
+// 此处按会话记录乐观预览，applyConvList 应用时优先还原；发送流程结束后清理。
+const uploadingPreviewMap = ref({}) // { [convId或面板id]: { preview, time } }
 
 // 暂存附件发送：本地立即展示预览 + 旋转加载态（微信风格）→ 后台上传 OSS → 成功后才真正发出；
 // 上传失败气泡置为发送失败；上传成功后的服务端发送/回显/超时守卫复用 sendMessage 既有机制
@@ -1828,20 +2094,27 @@ async function sendStagedMedia(item) {
     isUploading: true,
     extra: isImage
       ? { url: item.previewUrl, cacheUrl: item.previewUrl, name: item.name, size: item.size }
-      : { name: item.name, size: item.size },
+      : { name: item.name, size: item.size, duration: item.duration || 0 },
     time: formatMsgTime(Math.floor(Date.now() / 1000)),
+  }
+  // 记录乐观预览：上传窗口内列表刷新不丢失（语音/视频按 extra.name 识别为 [语音]/[视频]）
+  const previewKey = String(realConvMap.value[contact.id] || contact.convId || contact.id)
+  uploadingPreviewMap.value[previewKey] = {
+    preview: messagePreview({ msgType, extra: prepared.extra, text: '', type: 'out' }),
+    time: Math.floor(Date.now() / 1000),
   }
   const sendP = sendMessage(msgType, '', null, { prepared, deferSend: true })
   // 释放暂存预览地址：乐观消息 extra 已持有同一 blob URL，重复 revoke 会导致预览失效
   item.previewUrl = ''
   try {
-    const { downloadUrl, objectKey } = await fileApi.uploadFile(item.file, item.kind)
+    // 上传类型：录音产物按 voice 上报（后端校验时长≤60s/大小≤10MB），时长随预签名请求携带
+    const { downloadUrl, objectKey } = await fileApi.uploadFile(item.file, item.kind, { duration: item.duration || 0 })
     const optimistic = await sendP
     if (optimistic) optimistic.isUploading = false
     // 上传成功：带真实 URL 走服务端发送（WS/HTTP 兜底与回显替换由 sendMessage 接管）
     await optimistic?.__send?.({
       content: downloadUrl || '',
-      extra: { url: downloadUrl, key: objectKey, name: item.name, size: item.size },
+      extra: { url: downloadUrl, key: objectKey, name: item.name, size: item.size, duration: item.duration || 0 },
     })
   } catch (e) {
     console.warn('[MainWindow] 上传失败:', e?.message || e)
@@ -1853,6 +2126,9 @@ async function sendStagedMedia(item) {
       if (optimistic.localId) localdb.messages.setSyncState(optimistic.localId, 'failed')
     }
     showToast('上传失败，请稍后重试', 'error')
+  } finally {
+    // 发送流程结束（成功/失败）：解除乐观预览保护，后续由 WS 回显/正常摘要接管
+    delete uploadingPreviewMap.value[previewKey]
   }
 }
 
@@ -1947,8 +2223,12 @@ function isAllowedImage(name) {
 
 const IMAGE_ACCEPT = [...IMAGE_EXT_WHITELIST].map((e) => '.' + e).join(',')
 
-// 单文件上传上限 200MB（与后端 maxUserUploadSize 对齐）
+// 单文件上传大小上限（与后端 presign 分类校验一致）：
+// 普通文件 200MB / 图片 20MB / 语音 10MB；语音时长另限 60 秒
 const MAX_UPLOAD_SIZE = 200 * 1024 * 1024
+const IMAGE_MAX_SIZE = 20 * 1024 * 1024
+const VOICE_MAX_SIZE = 10 * 1024 * 1024
+const VOICE_MAX_SECONDS = 60
 
 // ===== 表情面板 =====
 const showEmojiPanel = ref(false)
@@ -2035,6 +2315,61 @@ function closeImagePreview() {
   imagePreview.value = null
 }
 
+// ===== 视频应用内播放 =====
+// 以 FILE 类型发送的视频按后缀识别：Chromium 可原生解码的格式（mp4/webm/mov）
+// 渲染为视频气泡（缩略图 + 弹层播放器）；其它格式仍走文件卡片由系统程序打开。
+const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v)$/i
+const videoPlayer = ref(null) // { url, name } | null
+
+function isVideoMsg(m) {
+  if (!m || Number(m.msgType) !== MSG_TYPE.FILE) return false
+  const name = String(m.extra?.name || '')
+  if (!VIDEO_EXT_RE.test(name)) return false
+  // webm 也可能是录音产物：带时长或名称以“语音_”开头时按语音处理
+  if (/\.webm$/i.test(name) && (Number(m.extra?.duration) > 0 || /^语音_/.test(name))) return false
+  return true
+}
+
+function openVideo(msg) {
+  const cacheUrl = msg.extra?.cacheUrl
+  const url = msg.extra?.url
+  const src = cacheUrl || url
+  if (!src) {
+    showToast('视频地址无效，无法播放', 'error')
+    return
+  }
+  stopVoice() // 避免语音与视频同时出声
+  // 本地缓存地址播放失败时可回退远端 URL 重试（见 onPlayerError）
+  videoPlayer.value = {
+    url: src,
+    fallbackUrl: cacheUrl && url ? url : '',
+    name: msg.extra?.name || '视频',
+  }
+}
+
+// 播放器加载失败：当前源非 http（如 wcfile 缓存地址）且有远端地址时回退重试一次
+function onPlayerError(e) {
+  const p = videoPlayer.value
+  if (!p || !p.fallbackUrl) return
+  const cur = String((e && e.target && e.target.src) || p.url || '')
+  if (cur.startsWith('http')) return
+  videoPlayer.value = { ...p, url: p.fallbackUrl, fallbackUrl: '' }
+}
+
+// 气泡内视频缩略图加载失败：本地缓存地址不可用时回退远端 URL
+function onBubbleVideoError(msg, e) {
+  const el = e && e.target
+  const url = msg.extra && msg.extra.url
+  if (!el || !url) return
+  const cur = String(el.src || '')
+  if (!cur.startsWith('http')) el.src = url
+}
+
+// 关闭播放器：v-if 卸载 video 元素即停止播放
+function closeVideo() {
+  videoPlayer.value = null
+}
+
 // 打开文件：优先走本地缓存 + 系统程序打开（Electron），失败兜底浏览器下载
 async function openFile(msg) {
   const url = msg.extra?.url
@@ -2066,6 +2401,22 @@ async function openFile(msg) {
 // 全局单 Audio 实例：切播新语音自动停旧；切会话/卸载时停止。
 const AUDIO_EXT_RE = /\.(webm|m4a|aac|mp3|wav|ogg|flac)$/i
 const voiceState = reactive({ id: null, playing: false, duration: 0 })
+// 已播放过的语音（未播放的接收语音显示红点）。
+// 持久化在本地库消息表 voice_played 字段（随消息同库同生命周期，退群清理/保留期清理自动跟随）；
+// 内存 Set 仅作会话内缓存，覆盖网络拉取映射的新对象（本地加载路径直接读字段）
+const voicePlayedSet = reactive(new Set())
+
+// 标记语音已播放：同时打在消息对象上（对象级响应式，立即触发该行重渲染清除红点）并落本地库
+function markVoicePlayed(m) {
+  if (!m) return
+  m.voicePlayed = true
+  if (m.id == null) return
+  voicePlayedSet.add(m.id)
+  // 已同步消息才有 server_id（pending 行不可能被播放）；浏览器调试环境无本地库时自动降级为仅内存态
+  if (!String(m.id).startsWith('local-')) {
+    localdb.messages.markVoicePlayed(m.id)
+  }
+}
 let voiceAudio = null
 
 // 语音消息识别：type=4 原生语音，或以音频后缀发送的 FILE 消息（兼容存量录音）
@@ -2084,12 +2435,62 @@ function isPlayingVoice(m) {
   return voiceState.id === m.id && voiceState.playing
 }
 
-// 时长展示：元数据加载后显示秒数（未知时不展示）
+// 接收的语音未播放过：气泡旁显示红点（自己发送的不显示）；
+// 优先看消息对象上的标记（本地加载时读 voice_played 字段/播放时即时打标），其次查会话内缓存集合
+function voiceUnread(m) {
+  return m && m.type === 'in' && !m.isUploading && m.status !== 1 && isAudioMsg(m) && !m.voicePlayed && !voicePlayedSet.has(m.id)
+}
+
+// 时长展示：优先 extra.duration（发送时携带/探测回填），其次播放中读到的元数据
 function voiceDurationLabel(m) {
-  if (voiceState.id === m.id && voiceState.duration > 0 && Number.isFinite(voiceState.duration)) {
-    return Math.round(voiceState.duration) + '″'
-  }
-  return ''
+  let d = Number(m.extra?.duration) || 0
+  if (!d && voiceState.id === m.id && Number.isFinite(voiceState.duration)) d = voiceState.duration
+  d = Math.round(d)
+  return d > 0 ? `${d}″` : ''
+}
+
+// 气泡宽度随时长渐变（微信风格）：未知时长给基础宽，最长封顶。
+// 宽度按消息首次渲染时固化：播放中才探测到时长时不再伸缩，避免气泡播放时变宽
+const voiceWidthCache = new Map()
+function voiceBubbleWidth(m) {
+  const key = String(m.id ?? '')
+  if (voiceWidthCache.has(key)) return voiceWidthCache.get(key)
+  const known = Number(m.extra?.duration) || 0
+  const px = (known ? Math.min(64 + Math.round(known) * 5, 170) : 64) + 'px'
+  if (key) voiceWidthCache.set(key, px)
+  return px
+}
+
+// 语音时长探测：对未知时长的音频串行预加载 metadata 回填 extra.duration，
+// 串行避免大量语音同时发请求；带超时守卫，异常不阻塞后续探测
+const voiceProbing = new Set()
+let voiceProbeChain = Promise.resolve()
+function probeVoiceDuration(m) {
+  if (!isAudioMsg(m)) return
+  if (Number(m.extra?.duration) > 0) return
+  const src = voiceSrc(m)
+  if (!src || voiceProbing.has(m.id)) return
+  voiceProbing.add(m.id)
+  voiceProbeChain = voiceProbeChain.then(() => new Promise((resolve) => {
+    const a = new Audio()
+    a.preload = 'metadata'
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      try { a.removeAttribute('src') } catch {}
+      resolve()
+    }
+    a.addEventListener('loadedmetadata', () => {
+      if (Number.isFinite(a.duration) && a.duration > 0 && m.extra) {
+        m.extra.duration = Math.round(a.duration)
+      }
+      done()
+    })
+    a.addEventListener('error', done)
+    setTimeout(done, 8000)
+    a.src = src
+  }))
 }
 
 function stopVoice() {
@@ -2108,10 +2509,11 @@ function togglePlayVoice(m) {
     showToast('语音地址无效，无法播放', 'error')
     return
   }
+  markVoicePlayed(m) // 点击即视为已播放，移除未读红点
   // 同一条：播放/暂停切换
   if (voiceState.id === m.id && voiceAudio) {
     if (voiceAudio.paused) {
-      voiceAudio.play().catch(() => showToast('语音播放失败', 'error'))
+      voiceAudio.play().catch((e) => onVoicePlayReject(e))
     } else {
       voiceAudio.pause()
     }
@@ -2122,33 +2524,45 @@ function togglePlayVoice(m) {
   const audio = new Audio(src)
   voiceAudio = audio
   voiceState.id = m.id
+  // 事件守卫一律按元素引用判定（voiceAudio !== audio 即已失效）：
+  // 重播同一条语音时，旧元素被 stopVoice 置空 src 触发的延迟 error 与
+  // 新元素对应同一消息 id，若按 id 判定会把旧元素的失败误算到新播放上
+  // （表现为有声但弹“语音播放失败”且播放动画消失）
   audio.addEventListener('loadedmetadata', () => {
-    if (voiceState.id === m.id) voiceState.duration = audio.duration || 0
+    if (voiceAudio !== audio) return
+    voiceState.duration = audio.duration || 0
+    // 同步回填 extra.duration：气泡宽度/时长展示不再依赖播放动作
+    if (Number.isFinite(audio.duration) && audio.duration > 0 && m.extra && !m.extra.duration) {
+      m.extra.duration = Math.round(audio.duration)
+    }
   })
   audio.addEventListener('play', () => {
+    if (voiceAudio !== audio) return
     if (voiceState.id === m.id) voiceState.playing = true
   })
   audio.addEventListener('pause', () => {
+    if (voiceAudio !== audio) return
     if (voiceState.id === m.id) voiceState.playing = false
   })
   audio.addEventListener('ended', () => {
+    if (voiceAudio !== audio) return
     if (voiceState.id === m.id) {
       voiceState.playing = false
       voiceState.id = null
     }
   })
   audio.addEventListener('error', async () => {
-    if (voiceState.id !== m.id) return // 已被切播/停止，忽略
+    if (voiceAudio !== audio) return // 已失效的元素（被切播/置空 src）触发的事件一律忽略
     // 兜底重试：预签名 URL 过期时先下载入缓存，换本地地址重播一次
     if (localdb.available() && m.extra?.url && !m.extra?.cacheUrl) {
       let r = null
       try {
         r = await localdb.fileCache.resolve(m.extra.url, m.extra.key || '', m.extra.name || '')
       } catch {}
-      if (r && r.hit && r.cacheUrl && voiceState.id === m.id) {
+      if (r && r.hit && r.cacheUrl && voiceAudio === audio) {
         m.extra.cacheUrl = r.cacheUrl
         audio.src = r.cacheUrl
-        audio.play().catch(() => showToast('语音播放失败', 'error'))
+        audio.play().catch((e) => onVoicePlayReject(e))
         return
       }
     }
@@ -2156,7 +2570,13 @@ function togglePlayVoice(m) {
     voiceState.id = null
     voiceState.playing = false
   })
-  audio.play().catch(() => showToast('语音播放失败', 'error'))
+  audio.play().catch((e) => onVoicePlayReject(e))
+}
+
+// play() 被拒：快速切换/暂停打断会抛 AbortError，属正常交互不提示；其余才报播放失败
+function onVoicePlayReject(e) {
+  if (e && (e.name === 'AbortError' || e.name === 'InterruptedError')) return
+  showToast('语音播放失败', 'error')
 }
 
 // 格式化文件大小
@@ -2347,6 +2767,12 @@ async function onWsMessage(msg) {
     const title =
       contact.type === 'group' && mapped.senderName ? `${contact.name}：${mapped.senderName}` : contact.name
     notifyNewMessage(title, messagePreview(mapped))
+    // 任务栏图标交互：窗口未聚焦（最小化/切到其它应用）时闪烁任务栏按钮，聚焦后自动停止
+    if (typeof document !== 'undefined' && !document.hasFocus()) {
+      try {
+        window.electronAPI?.badge?.flash()
+      } catch {}
+    }
   }
 
   // 未读推进去重：仅对“真正新增”的他人消息（seq 超出客户端已知水位）计未读。
@@ -2654,6 +3080,63 @@ function closeMsgMenu() {
   menuMsg.value = null
 }
 
+// ===== 会话列表搜索框旁“+”菜单：发起群聊 / 添加朋友 / 写笔记 =====
+const showPlusMenu = ref(false)
+const plusMenuEl = ref(null) // 菜单容器：内部点击不关闭
+
+function togglePlusMenu(e) {
+  if (e && e.stopPropagation) e.stopPropagation()
+  showPlusMenu.value = !showPlusMenu.value
+}
+
+// 菜单外点击关闭（document 监听，按钮自身已阻止冒泡）
+function onDocClickPlusMenu(e) {
+  if (!showPlusMenu.value) return
+  if (plusMenuEl.value && plusMenuEl.value.contains(e.target)) return
+  showPlusMenu.value = false
+}
+
+// 发起群聊：复用建群弹窗，打开前拉取最新好友列表供选成员
+const showCreateGroup = ref(false)
+const createGroupFriends = ref([])
+async function openCreateGroup() {
+  showPlusMenu.value = false
+  try {
+    const flist = await friendApi.list(true)
+    createGroupFriends.value = (flist || []).map((f, i) => ({
+      id: String(f.uid),
+      uid: f.uid,
+      name: f.remark || f.nickname || `用户${f.uid}`,
+      avatar: f.avatar ? f.avatar[0] : (f.nickname || '?')[0],
+      color: colors[i % colors.length],
+    }))
+  } catch {
+    createGroupFriends.value = []
+  }
+  showCreateGroup.value = true
+}
+
+// 建群成功：关弹窗 + 刷新会话列表（新群立即可见）+ 通知父组件
+async function onPlusGroupCreated(info) {
+  showCreateGroup.value = false
+  try {
+    await loadRealData()
+  } catch {}
+  emit('group-created', info)
+}
+
+// 添加朋友：由 App.vue 统一持有 AddFriendModal，发事件打开
+function openAddFriendFromMenu() {
+  showPlusMenu.value = false
+  emit('request-add-friend')
+}
+
+// 写笔记：功能暂未实现，保留入口
+function openWriteNote() {
+  showPlusMenu.value = false
+  showToast('笔记功能即将上线，敬请期待', 'info')
+}
+
 // 事件驱动的会话增量插入（阶段二减压）：
 // conversation.created 事件体携带 conv_id（字符串）与 target 信息，直接本地构建会话项，不再全量重载。
 // 信息不足（如旧版事件无 conv_id）时兜底 loadRealData 全量。
@@ -2779,6 +3262,7 @@ function onCustomFriendAdded() {
 onMounted(() => {
   document.addEventListener('click', closeMsgMenu)
   document.addEventListener('scroll', closeMsgMenu, true)
+  document.addEventListener('click', onDocClickPlusMenu)
   if (useRealBackend.value) return
   loadRealData().then(() => {
     if (!useRealBackend.value) return
@@ -2801,6 +3285,7 @@ onActivated(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('click', closeMsgMenu)
   document.removeEventListener('scroll', closeMsgMenu, true)
+  document.removeEventListener('click', onDocClickPlusMenu)
   window.removeEventListener('wc:friend-added', onCustomFriendAdded)
 })
 </script>
@@ -2838,6 +3323,46 @@ onBeforeUnmount(() => {
                 <line x1="9" y1="3" x2="3" y2="9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
               </svg>
             </button>
+          </div>
+          <!-- “+”按钮：发起群聊 / 添加朋友 / 写笔记 -->
+          <div ref="plusMenuEl" class="plus-wrap">
+            <button
+              class="plus-btn"
+              :class="{ active: showPlusMenu }"
+              type="button"
+              aria-label="新建操作"
+              aria-haspopup="menu"
+              :aria-expanded="showPlusMenu"
+              @click="togglePlusMenu"
+            >
+              <svg viewBox="0 0 16 16" width="16" height="16">
+                <path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </button>
+            <div v-if="showPlusMenu" class="plus-menu" role="menu">
+              <button class="plus-menu-item" role="menuitem" @click="openCreateGroup">
+                <svg viewBox="0 0 20 20" width="18" height="18">
+                  <path d="M3.5 4.5a3 3 0 0 1 3-3h7a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H8l-3.5 3v-3a3 3 0 0 1-1-2.2v-6.8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+                  <path d="M10 5.5v4M8 7.5h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                </svg>
+                <span>发起群聊</span>
+              </button>
+              <button class="plus-menu-item" role="menuitem" @click="openAddFriendFromMenu">
+                <svg viewBox="0 0 20 20" width="18" height="18">
+                  <circle cx="8" cy="6.5" r="2.8" fill="none" stroke="currentColor" stroke-width="1.4" />
+                  <path d="M2.8 16.2c0-2.6 2.3-4.3 5.2-4.3s5.2 1.7 5.2 4.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                  <path d="M15.3 5.2v4M13.3 7.2h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                </svg>
+                <span>添加朋友</span>
+              </button>
+              <button class="plus-menu-item" role="menuitem" @click="openWriteNote">
+                <svg viewBox="0 0 20 20" width="18" height="18">
+                  <rect x="4" y="2.5" width="12" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.4" />
+                  <path d="M7 7h6M7 10.5h6M7 14h3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                </svg>
+                <span>写笔记</span>
+              </button>
+            </div>
           </div>
         </div>
         <div class="list-header">
@@ -2913,13 +3438,13 @@ onBeforeUnmount(() => {
                 <line x1="14.33" y1="14.33" x2="18.33" y2="18.33" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </button>
-            <button class="circle-btn" aria-label="语音通话">
+            <button class="circle-btn" aria-label="语音通话" :disabled="!canVoiceCall" @click="startVoiceCall">
               <svg viewBox="0 0 22 22" width="22" height="22">
                 <path d="M4.5 6.5c0-1.7 1.3-3 3-3 1 0 1.8.5 2.4 1.3l1.2 1.6c.3.4.3.9 0 1.3l-1.4 1.7a10 10 0 0 0 4.4 4.4l1.7-1.4c.4-.3.9-.3 1.3 0l1.6 1.2c.8.6 1.3 1.4 1.3 2.4 0 1.7-1.3 3-3 3h-.5c-7-1-12.6-6.6-13.5-13.5v-.5z"
                   fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
               </svg>
             </button>
-            <button class="circle-btn" aria-label="视频通话">
+            <button class="circle-btn" aria-label="视频通话" :disabled="!hasActiveContact" @click="startVideoCall">
               <svg viewBox="0 0 22 22" width="22" height="22">
                 <rect x="2.75" y="5.5" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5" />
                 <path d="M14.67 9.5l4.58-2.08v7.16L14.67 12.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
@@ -2936,6 +3461,8 @@ onBeforeUnmount(() => {
         </header>
         <div class="chat-divider"></div>
 
+        <!-- 消息区容器：胶囊的定位基准，仅覆盖消息滚动区（不含头部/输入栏） -->
+        <div class="messages-area">
         <!-- 消息区 -->
         <div class="messages" :class="transitionState" role="log" aria-live="polite" aria-label="聊天记录">
           <!-- 加载历史消息指示器 -->
@@ -3016,20 +3543,40 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                       </template>
-                      <!-- 语音消息：气泡内直接播放（录音产物以 FILE 类型发送，按音频后缀识别） -->
+                      <!-- 语音消息：微信风格波形 + 时长，点击播放/暂停 -->
                       <template v-else-if="isAudioMsg(meta.msg)">
                         <div
                           class="msg-voice"
+                          :class="{ playing: isPlayingVoice(meta.msg) }"
+                          :style="{ minWidth: voiceBubbleWidth(meta.msg) }"
                           role="button"
                           :aria-label="isPlayingVoice(meta.msg) ? '暂停语音' : '播放语音'"
                           :title="isPlayingVoice(meta.msg) ? '点击暂停' : '点击播放'"
                           @click.stop="togglePlayVoice(meta.msg)"
                         >
-                          <span class="voice-bars" :class="{ playing: isPlayingVoice(meta.msg) }" aria-hidden="true">
-                            <i></i><i></i><i></i>
-                          </span>
+                          <svg class="voice-wave" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                            <path d="M7.2 8.1a3.3 3.3 0 0 1 0 3.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                            <path d="M9.9 6a6.6 6.6 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                            <path d="M12.6 4a9.9 9.9 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                          </svg>
                           <span class="voice-dur">{{ voiceDurationLabel(meta.msg) }}</span>
                           <span v-if="meta.msg.isUploading" class="spinner media-spinner voice-spinner"></span>
+                        </div>
+                        <!-- 未读红点：接收的语音未播放过时展示（自己发送的不显示） -->
+                        <span v-if="voiceUnread(meta.msg)" class="voice-unread-dot" aria-label="未播放语音"></span>
+                      </template>
+                      <!-- 视频消息：缩略图预览，点击弹层播放 -->
+                      <template v-else-if="isVideoMsg(meta.msg)">
+                        <div class="msg-video-wrap" title="点击播放" @click.stop="openVideo(meta.msg)">
+                          <video class="msg-video" :src="meta.msg.extra.cacheUrl || meta.msg.extra.url" preload="metadata" muted playsinline @error="onBubbleVideoError(meta.msg, $event)"></video>
+                          <div v-if="meta.msg.isUploading" class="media-pending-mask">
+                            <span class="spinner media-spinner"></span>
+                          </div>
+                          <div v-else class="video-play-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" width="26" height="26">
+                              <path d="M8.5 6v12l10-6z" fill="currentColor" />
+                            </svg>
+                          </div>
                         </div>
                       </template>
                       <!-- 文件消息 -->
@@ -3067,20 +3614,40 @@ onBeforeUnmount(() => {
                             </div>
                           </div>
                         </template>
-                        <!-- 语音消息：气泡内直接播放（录音产物以 FILE 类型发送，按音频后缀识别） -->
+                        <!-- 语音消息：微信风格波形 + 时长，点击播放/暂停 -->
                         <template v-else-if="isAudioMsg(meta.msg)">
                           <div
                             class="msg-voice"
+                            :class="{ playing: isPlayingVoice(meta.msg) }"
+                            :style="{ minWidth: voiceBubbleWidth(meta.msg) }"
                             role="button"
                             :aria-label="isPlayingVoice(meta.msg) ? '暂停语音' : '播放语音'"
                             :title="isPlayingVoice(meta.msg) ? '点击暂停' : '点击播放'"
                             @click.stop="togglePlayVoice(meta.msg)"
                           >
-                            <span class="voice-bars" :class="{ playing: isPlayingVoice(meta.msg) }" aria-hidden="true">
-                              <i></i><i></i><i></i>
-                            </span>
+                            <svg class="voice-wave" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                              <path d="M7.2 8.1a3.3 3.3 0 0 1 0 3.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                              <path d="M9.9 6a6.6 6.6 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                              <path d="M12.6 4a9.9 9.9 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                            </svg>
                             <span class="voice-dur">{{ voiceDurationLabel(meta.msg) }}</span>
                             <span v-if="meta.msg.isUploading" class="spinner media-spinner voice-spinner"></span>
+                          </div>
+                          <!-- 未读红点：接收的语音未播放过时展示（自己发送的不显示） -->
+                          <span v-if="voiceUnread(meta.msg)" class="voice-unread-dot" aria-label="未播放语音"></span>
+                        </template>
+                        <!-- 视频消息：缩略图预览，点击弹层播放 -->
+                        <template v-else-if="isVideoMsg(meta.msg)">
+                          <div class="msg-video-wrap" title="点击播放" @click.stop="openVideo(meta.msg)">
+                            <video class="msg-video" :src="meta.msg.extra.cacheUrl || meta.msg.extra.url" preload="metadata" muted playsinline @error="onBubbleVideoError(meta.msg, $event)"></video>
+                            <div v-if="meta.msg.isUploading" class="media-pending-mask">
+                              <span class="spinner media-spinner"></span>
+                            </div>
+                            <div v-else class="video-play-icon" aria-hidden="true">
+                              <svg viewBox="0 0 24 24" width="26" height="26">
+                                <path d="M8.5 6v12l10-6z" fill="currentColor" />
+                              </svg>
+                            </div>
                           </div>
                         </template>
                         <!-- 文件消息 -->
@@ -3145,20 +3712,21 @@ onBeforeUnmount(() => {
           </template>
         </div>
 
-        <!-- 回到底部按钮：收到新消息且不在底部时显示 -->
+        <!-- 微信风格：浏览历史时收到新消息，底部浮出“你有新消息”胶囊，点击回到最新消息 -->
         <transition name="scroll-btn">
           <button
             v-if="showScrollToBottom"
-            class="scroll-to-bottom-btn"
-            aria-label="回到底部"
+            class="new-msg-pill"
+            aria-label="你有新消息，点击回到底部"
             @click="jumpToBottom"
           >
-            <svg viewBox="0 0 20 20" width="18" height="18">
-              <path d="M4 7l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            <span>你有新消息</span>
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-            <span>回到底部</span>
           </button>
         </transition>
+        </div>
 
         <!-- 图片预览遮罩 -->
         <transition name="fade">
@@ -3168,6 +3736,19 @@ onBeforeUnmount(() => {
               <div class="image-preview-footer">
                 <span class="image-preview-name">{{ imagePreview.name }}</span>
                 <button class="image-preview-close" @click="closeImagePreview">×</button>
+              </div>
+            </div>
+          </div>
+        </transition>
+
+        <!-- 视频播放遮罩：原生 video 控件 + 自动播放，点击遮罩或关闭按钮停止（v-if 卸载即停） -->
+        <transition name="fade">
+          <div v-if="videoPlayer" class="video-preview" @click="closeVideo">
+            <div class="video-preview-inner" @click.stop>
+              <video class="video-preview-player" :src="videoPlayer.url" controls autoplay @error="onPlayerError"></video>
+              <div class="image-preview-footer">
+                <span class="image-preview-name">{{ videoPlayer.name }}</span>
+                <button class="image-preview-close" aria-label="关闭视频" @click="closeVideo">×</button>
               </div>
             </div>
           </div>
@@ -3237,12 +3818,10 @@ onBeforeUnmount(() => {
               </template>
               <template v-else>
                 <div class="staged-file-card">
-                  <svg viewBox="0 0 20 20" width="20" height="20">
-                    <path d="M5 2.5h6l4 4v11H5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-                    <path d="M11.67 2.5v3.33H15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-                  </svg>
-                  <span class="staged-file-name">{{ s.name }}</span>
-                  <span class="staged-file-size">{{ formatFileSize(s.size) }}</span>
+                  <div class="staged-file-text">
+                    <span class="staged-file-name">{{ s.name }}</span>
+                    <span class="staged-file-size">{{ formatFileSize(s.size) }}</span>
+                  </div>
                 </div>
               </template>
               <button class="staged-remove" aria-label="移除附件" @click="removeStaged(s.id)">
@@ -3441,22 +4020,6 @@ onBeforeUnmount(() => {
 
             <div class="divider-line"></div>
 
-            <!-- 群聊同样支持查找聊天记录：行结构/样式与单聊完全一致（限定当前会话，默认展示全部） -->
-            <div class="info-row clickable" @click="openSearchHistory">
-              <div class="info-left">
-                <svg viewBox="0 0 16 16" width="16" height="16" class="row-ico">
-                  <circle cx="6.67" cy="6.67" r="4.67" fill="none" stroke="currentColor" stroke-width="1.3" />
-                  <line x1="10.67" y1="10.67" x2="13.33" y2="13.33" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-                </svg>
-                <span>查找聊天记录</span>
-              </div>
-              <svg viewBox="0 0 16 16" width="16" height="16" class="chevron row-ico">
-                <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </div>
-
-            <div class="divider-line"></div>
-
             <!-- 群公告摘要：群主/管理员可编辑 -->
             <div class="group-section">
               <div class="section-title">
@@ -3562,6 +4125,20 @@ onBeforeUnmount(() => {
 
             <div class="profile-footer">
               <div class="divider-line"></div>
+
+              <!-- 查找聊天记录：行结构/样式与单聊完全一致，与免打扰/不落盘同组连续展示 -->
+              <div class="info-row clickable" @click="openSearchHistory">
+                <div class="info-left">
+                  <svg viewBox="0 0 16 16" width="16" height="16" class="row-ico">
+                    <circle cx="6.67" cy="6.67" r="4.67" fill="none" stroke="currentColor" stroke-width="1.3" />
+                    <line x1="10.67" y1="10.67" x2="13.33" y2="13.33" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                  </svg>
+                  <span>查找聊天记录</span>
+                </div>
+                <svg viewBox="0 0 16 16" width="16" height="16" class="chevron row-ico">
+                  <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </div>
 
               <div class="info-row">
                 <span class="info-value">消息免打扰</span>
@@ -3723,6 +4300,17 @@ onBeforeUnmount(() => {
       @jump="jumpToMessage"
     />
 
+    <!-- 创建群聊弹窗：会话列表“+”菜单入口 -->
+    <CreateGroupModal
+      v-if="showCreateGroup"
+      :friends="createGroupFriends"
+      @close="showCreateGroup = false"
+      @created="onPlusGroupCreated"
+    />
+
+    <!-- 语音通话面板：全局单例，状态机驱动显隐（api/call.js） -->
+    <CallWindow />
+
     <!-- 轻量顶部 toast：群设置保存成功/失败提示 -->
     <Teleport to="body">
       <div v-if="toastState" class="wc-toast" :class="toastState.type" role="status">
@@ -3766,10 +4354,85 @@ onBeforeUnmount(() => {
   padding: 0 12px;
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+/* ===== 搜索框旁“+”按钮与下拉菜单 ===== */
+.plus-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.plus-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: var(--im-surface-2);
+  color: var(--im-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.plus-btn:hover {
+  background: var(--im-hover-gray);
+}
+
+/* 菜单展开态：品牌蓝强调 */
+.plus-btn.active {
+  background: var(--im-primary);
+  color: #fff;
+}
+
+.plus-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1200;
+  min-width: 148px;
+  padding: 6px;
+  background: var(--im-surface);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plus-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--im-text-title);
+  font-family: inherit;
+  font-size: 0.929rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.plus-menu-item:hover {
+  background: var(--im-surface-2);
+}
+
+.plus-menu-item svg {
+  color: var(--im-text-secondary);
+  flex-shrink: 0;
 }
 
 .search-box {
   flex: 1;
+  /* flex 项默认 min-width:auto 不会缩小到内容固有宽以下，
+     会把右侧“+”按钮挤出 300px 侧栏被遮挡，必须置 0 */
+  min-width: 0;
   height: 36px;
   padding: 0 12px;
   background: var(--im-surface-2);
@@ -4171,6 +4834,13 @@ onBeforeUnmount(() => {
   color: var(--im-text-secondary);
 }
 
+/* 通话按钮不可用态（群聊/未选中会话）：置灰不可点 */
+.circle-btn:disabled {
+  color: var(--im-text-muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .circle-btn:hover {
   background: var(--im-surface-2);
 }
@@ -4186,6 +4856,15 @@ onBeforeUnmount(() => {
 }
 
 /* 消息区 */
+/* 消息区容器：占满头部与输入栏之间的空间，作为“你有新消息”胶囊的定位基准 */
+.messages-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .messages {
   flex: 1;
   padding: 16px 24px;
@@ -4602,55 +5281,64 @@ onBeforeUnmount(() => {
 }
 
 /* ===== 文件消息卡片：气泡背景移除后，文件卡片自带浅色底以保证可读性 ===== */
-/* 语音消息：点击气泡播放/暂停，播放中波形条起伏动画（currentColor 自适应收/发气泡配色） */
+/* 语音消息：微信风格波形 + 时长，点击气泡播放/暂停（currentColor 自适应收/发气泡配色） */
 .msg-voice {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 72px;
-  padding: 2px 4px;
+  min-height: 22px;
   cursor: pointer;
   user-select: none;
 }
 
-.voice-bars {
-  display: flex;
-  align-items: center;
-  gap: 2.5px;
-  height: 16px;
+/* 发送方语音镜像：时长在左、波形在右（与微信收发方向一致） */
+.bubble.out .msg-voice {
+  flex-direction: row-reverse;
 }
 
-.voice-bars i {
-  width: 3px;
-  border-radius: 1.5px;
-  background: currentColor;
-  opacity: 0.85;
-  transform-origin: center;
+.bubble.out .voice-wave {
+  transform: scaleX(-1);
 }
 
-.voice-bars i:nth-child(1) { height: 6px; }
-.voice-bars i:nth-child(2) { height: 13px; }
-.voice-bars i:nth-child(3) { height: 9px; }
+.voice-wave {
+  flex-shrink: 0;
+}
 
-/* 播放中：波形条依次起伏 */
-.voice-bars.playing i { animation: voiceBar 0.9s ease-in-out infinite; }
-.voice-bars.playing i:nth-child(2) { animation-delay: 0.15s; }
-.voice-bars.playing i:nth-child(3) { animation-delay: 0.3s; }
+/* 播放中：波形三段弧线依次闪烁 */
+.msg-voice.playing .voice-wave path { animation: wavePulse 0.9s ease-in-out infinite; }
+.msg-voice.playing .voice-wave path:nth-child(2) { animation-delay: 0.15s; }
+.msg-voice.playing .voice-wave path:nth-child(3) { animation-delay: 0.3s; }
 
-@keyframes voiceBar {
-  0%, 100% { transform: scaleY(0.45); }
-  50% { transform: scaleY(1); }
+@keyframes wavePulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
 
 .voice-dur {
-  font-size: 0.857rem;
-  opacity: 0.8;
-  min-width: 0;
+  font-size: 0.929rem;
+  line-height: 22px;
 }
 
 .voice-spinner {
   width: 14px;
   height: 14px;
+}
+
+/* 含语音的气泡：未读红点绝对定位在气泡外侧，不占气泡背景 */
+.bubble:has(.msg-voice) {
+  position: relative;
+}
+
+/* 未读红点：接收语音未播放过时展示在气泡旁 */
+.voice-unread-dot {
+  position: absolute;
+  top: 50%;
+  right: -14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--im-danger, #ef4444);
+  transform: translateY(-50%);
 }
 
 .msg-file {
@@ -4763,6 +5451,68 @@ onBeforeUnmount(() => {
 
 .image-preview-close:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+/* ===== 视频消息气泡：缩略图 + 中央播放图标 ===== */
+.msg-video-wrap {
+  position: relative;
+  width: 220px;
+  max-width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  cursor: pointer;
+}
+
+.msg-video {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  max-height: 260px;
+  object-fit: cover;
+}
+
+.video-play-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.12);
+  transition: background-color 0.15s ease;
+}
+
+.msg-video-wrap:hover .video-play-icon {
+  background: rgba(0, 0, 0, 0.24);
+}
+
+/* ===== 视频播放遮罩（复用图片预览的 footer/关闭按钮样式） ===== */
+.video-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+
+.video-preview-inner {
+  position: relative;
+  max-width: 82vw;
+  max-height: 88vh;
+  cursor: default;
+}
+
+.video-preview-player {
+  max-width: 82vw;
+  max-height: 82vh;
+  border-radius: 6px;
+  background: #000;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
+  outline: none;
 }
 
 .fade-enter-active,
@@ -5167,33 +5917,35 @@ onBeforeUnmount(() => {
   color: var(--im-text-muted);
 }
 
-/* ===== 回到底部按钮 ===== */
-.scroll-to-bottom-btn {
+/* ===== 微信风格“你有新消息”胶囊：浏览历史时收到新消息浮出，点击回到最新消息 ===== */
+.new-msg-pill {
   position: absolute;
-  bottom: 16px;
+  bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 120;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 18px;
+  gap: 4px;
+  padding: 7px 14px;
   border: none;
   border-radius: 999px;
   background: var(--im-surface);
-  color: var(--im-primary);
-  font-size: 0.9rem;
+  color: var(--im-text-secondary);
+  font-family: inherit;
+  font-size: 0.857rem;
   font-weight: 500;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
   cursor: pointer;
-  transition: background 0.15s, transform 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
-.scroll-to-bottom-btn:hover {
+.new-msg-pill:hover {
   background: var(--im-surface-2);
+  color: var(--im-primary);
 }
 
-.scroll-to-bottom-btn:active {
+.new-msg-pill:active {
   transform: translateX(-50%) scale(0.97);
 }
 
@@ -6165,7 +6917,8 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 2px 0;
+  /* 顶部预留 8px：移除按钮绝对定位 top:-6px 不被上方元素遮挡 */
+  padding: 8px 0 2px;
 }
 
 .staged-item {
@@ -6181,23 +6934,33 @@ onBeforeUnmount(() => {
   display: block;
 }
 
+/* 文件卡片：横向布局（图标左 + 名称/大小右），高度随内容自适应。
+   历史 bug：固定 64px 高 + 纵向堆叠导致内容溢出卡片被输入区遮挡 */
 .staged-file-card {
-  width: 136px;
-  height: 64px;
+  width: 180px;
   box-sizing: border-box;
-  padding: 8px 10px;
+  padding: 8px 12px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   background: var(--im-surface-2);
   border: 1px solid var(--im-border);
   border-radius: 8px;
   color: var(--im-primary);
 }
 
+.staged-file-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .staged-file-name {
   font-size: 0.786rem;
+  line-height: 15px;
   color: var(--im-text-title);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6206,6 +6969,7 @@ onBeforeUnmount(() => {
 
 .staged-file-size {
   font-size: 0.714rem;
+  line-height: 13px;
   color: var(--im-text-muted);
 }
 

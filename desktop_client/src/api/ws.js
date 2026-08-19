@@ -34,6 +34,7 @@ const ACK_MAX_RETRIES = 3 // 最多重发 3 次
 const listeners = {
   message: [], // (msg) => {} 收到新消息
   read: [], // (data) => {} 对方已读
+  call: [], // (data) => {} 通话信令（call.push 帧）
   open: [],
   close: [],
   error: [],
@@ -116,6 +117,12 @@ export const wsClient = {
   // 送达回执（conv_id / msg_id 传字符串）
   sendAck(convId, msgId) {
     sendFrame('ack', { conv_id: String(convId), msg_id: String(msgId) })
+  },
+
+  // 通话信令（纯转发，不走 ack 重发队列：信令时效性强，过期重发无意义）
+  // body: { call_id, action, to, payload }
+  sendCall(body) {
+    return sendFrame('call', body)
   },
 }
 
@@ -239,6 +246,10 @@ function handleFrame(frame) {
       break
     case 'social':
       emit('social', frame.body)
+      break
+    case 'call.push':
+      // 通话信令：转交通话状态机处理（invite/answer/ice/reject/busy/cancel/hangup/offline）
+      emit('call', frame.body)
       break
     case 'kick':
       // 被服务端强制下线（账号被管理员禁用等）：停止重连、清空令牌、跳转登录页

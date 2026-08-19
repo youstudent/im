@@ -354,6 +354,7 @@ const currentView = computed(() => {
           :chat-badge="chatBadge"
           @update:show-search-history="showSearchHistory = $event"
           @update:chat-badge="chatBadge = $event"
+          @request-add-friend="openAddFriend"
           @send-message="handleSendMessage"
           @group-created="handleGroupCreated"
         />

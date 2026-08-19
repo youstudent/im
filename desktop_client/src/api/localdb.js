@@ -108,6 +108,10 @@ export const localdb = {
     async claimPending(convId, content) {
       return unwrap(await invoke('messages', 'claimPending', convId, content), null)
     },
+    // 语音已播放标记：写入消息表 voice_played 字段（未读红点状态随消息持久化）
+    async markVoicePlayed(serverId) {
+      return unwrap(await invoke('messages', 'markVoicePlayed', serverId), false)
+    },
   },
 
   // ---- 元数据 ----

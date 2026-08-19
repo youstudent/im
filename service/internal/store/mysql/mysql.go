@@ -31,6 +31,9 @@ func New(cfg config.MySQL) (*DB, error) {
 	db.SetMaxOpenConns(cfg.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.MaxIdleConns)
 	db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+	// 空闲连接回收：环境（容器 NAT/防火墙）会静默杀掉长时间空闲的 TCP 连接，
+	// 取到陈旧连接的第一个请求会 500，60s 回收窗口大幅降低命中概率
+	db.SetConnMaxIdleTime(60 * time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

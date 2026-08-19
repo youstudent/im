@@ -214,6 +214,12 @@ func (s *Service) HasPendingFriendRequest(uid int64) bool {
 	return len(list) > 0
 }
 
+// AreFriends 判断两用户是否为好友（通话信令转发前鉴权用，防止对任意用户发起呼叫骚扰）。
+func (s *Service) AreFriends(uid, friendUID int64) bool {
+	ok, err := s.store.AreFriends(uid, friendUID)
+	return err == nil && ok
+}
+
 // ListFriendRequests 我收到的待处理好友申请（含申请人昵称）。
 func (s *Service) ListFriendRequests(uid int64) ([]*FriendRequestDTO, error) {
 	list, err := s.store.ListFriendRequests(uid)

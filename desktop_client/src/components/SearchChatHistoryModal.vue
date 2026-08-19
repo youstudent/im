@@ -146,6 +146,18 @@ function parseExtra(extra) {
   }
 }
 
+// 文件消息摘要占位：按后缀识别 [语音]/[视频]，其余 [文件]
+// （与聊天页气泡识别一致：webm 带时长或“语音_”名称视为录音）
+const AUDIO_NAME_RE = /\.(webm|m4a|aac|mp3|wav|ogg|flac)$/i
+const VIDEO_NAME_RE = /\.(mp4|mov|m4v|webm)$/i
+function mediaPlaceholder(extra) {
+  const n = String(extra?.name || '')
+  const isVoice = AUDIO_NAME_RE.test(n) && (!VIDEO_NAME_RE.test(n) || Number(extra?.duration) > 0 || /^语音_/.test(n))
+  if (isVoice) return n ? `[语音] ${n}` : '[语音]'
+  if (VIDEO_NAME_RE.test(n)) return n ? `[视频] ${n}` : '[视频]'
+  return n ? `[文件] ${n}` : '[文件]'
+}
+
 // 图片命中项：解析本地文件缓存地址（wcfile://）；未命中会后台下载，下次搜索直接命中。
 // 回填时按 id 从响应式数组取代理对象写入，直接改原始对象不会触发视图更新
 function hydrateHitThumb(hit) {
@@ -172,7 +184,7 @@ function localRowToHit(row) {
   if (msgType === 2) {
     summary = '[图片]'
   } else if (msgType === 3) {
-    summary = extra.name ? `[文件] ${extra.name}` : '[文件]'
+    summary = mediaPlaceholder(extra)
   } else {
     // 摘要截取关键字附近片段，避免超长消息铺满结果行
     const lower = summary.toLowerCase()
@@ -258,7 +270,7 @@ function localSearch() {
         summary: m.msgType === 2
           ? '[图片]'
           : m.msgType === 3
-            ? (m.extra?.name ? `[文件] ${m.extra.name}` : '[文件]')
+            ? mediaPlaceholder(m.extra)
             : text,
         time: m.time || '',
         kw,

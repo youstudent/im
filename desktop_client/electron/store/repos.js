@@ -135,14 +135,16 @@ const messageRepo = {
         .all(String(convId), Number(beforeSeq), lim)
         .reverse()
     }
-    // 首页：最新 lim 条 = 已同步按 seq 倒序取 + 本地未同步(pending/failed)；
-    // 合并按创建时间归并排序，保证发送失败消息按真实时间位置展示，而非固定堆在末尾
+    // 首页：最新 lim 条 = 已同步按 seq 倒序取 + 本地未同步(pending/failed) + 本地专属记录；
+    // 合并按创建时间归并排序，保证发送失败消息按真实时间位置展示，而非固定堆在末尾。
+    // 本地专属记录（seq=0 且 sync_state='synced'，如通话记录）：无服务端 seq 但已终结，
+    // 与 pending 同属 seq=0，一并按时间并入首页（向上翻页不含，与 pending 一致）
     const synced = db
       .prepare('SELECT * FROM messages WHERE conv_id = ? AND seq > 0 ORDER BY seq DESC LIMIT ?')
       .all(String(convId), lim)
       .reverse()
     const local = db
-      .prepare("SELECT * FROM messages WHERE conv_id = ? AND seq = 0 AND sync_state != 'synced' ORDER BY created_at ASC")
+      .prepare('SELECT * FROM messages WHERE conv_id = ? AND seq = 0 ORDER BY created_at ASC')
       .all(String(convId))
     return synced
       .concat(local)
@@ -298,6 +300,17 @@ const messageRepo = {
       )
       .get(String(convId), content ?? '')
     return row || null
+  },
+
+  // 标记语音已播放：按 server_id 置 voice_played=1（雪花 ID 全局唯一）；
+  // upsert 冲突更新不含该列，已标记状态不会被消息同步覆盖；pending 行无 server_id 自然忽略
+  markVoicePlayed(serverId) {
+    const db = getDb()
+    if (!db || !serverId) return false
+    const info = db
+      .prepare('UPDATE messages SET voice_played = 1 WHERE server_id = ? AND voice_played = 0')
+      .run(String(serverId))
+    return info.changes > 0
   },
 
   // 删除某会话的全部消息（退群清理），返回删除行数

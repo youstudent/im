@@ -45,6 +45,19 @@ function resolveProtocolPath(hashExt) {
   return filePathFor(m[1], m[2])
 }
 
+// 常见媒体 MIME：<video>/<audio> 依赖 Content-Type 选择解码器，未知类型一律按二进制
+const MIME_TYPES = {
+  mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v',
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  pdf: 'application/pdf', txt: 'text/plain',
+}
+
+function mimeOf(filePath) {
+  const ext = (filePath.match(/\.([a-z0-9]+)$/i) || [])[1] || ''
+  return MIME_TYPES[ext.toLowerCase()] || 'application/octet-stream'
+}
+
 // 同键下载去重（并发请求同一文件只下载一次）
 const inflight = new Map()
 
@@ -126,15 +139,66 @@ function filesSize() {
   return total
 }
 
-// 供 main.js 注册协议处理：wcfile://{hash}.{ext} → 本地文件
+// 供 main.js 注册协议处理：wcfile://{hash}.{ext} → 本地文件。
+// 支持 HTTP Range（206 分段响应）：<video>/<audio> 媒体元素依赖 Range 流式加载，
+// 只返整文件（200）会导致视频无法播放/无法拖动进度；同时按段读取避免整包进内存。
 function createProtocolHandler() {
   return async (request) => {
     try {
       const u = new URL(request.url)
       const filePath = resolveProtocolPath(u.host + (u.pathname || '').replace(/^\//, ''))
       if (!filePath) return new Response('bad request', { status: 400 })
+      const stat = fs.statSync(filePath)
+      const total = stat.size
+      const mime = mimeOf(filePath)
+      const range = request.headers.get('range')
+      if (range) {
+        const m = /^bytes=(\d*)-(\d*)$/.exec(String(range).trim())
+        let start = 0
+        let end = total - 1
+        if (m) {
+          if (m[1]) {
+            start = parseInt(m[1], 10)
+            if (m[2]) end = parseInt(m[2], 10)
+          } else if (m[2]) {
+            // 后缀区间 bytes=-N：最后 N 字节
+            start = Math.max(0, total - parseInt(m[2], 10))
+          }
+        }
+        if (end >= total) end = total - 1
+        if (!Number.isFinite(start) || start < 0 || start > end || start >= total) {
+          return new Response('range not satisfiable', {
+            status: 416,
+            headers: { 'Content-Range': `bytes */${total}` },
+          })
+        }
+        const len = end - start + 1
+        const buf = Buffer.alloc(len)
+        const fd = fs.openSync(filePath, 'r')
+        try {
+          fs.readSync(fd, buf, 0, len, start)
+        } finally {
+          fs.closeSync(fd)
+        }
+        return new Response(buf, {
+          status: 206,
+          headers: {
+            'Content-Type': mime,
+            'Content-Range': `bytes ${start}-${end}/${total}`,
+            'Content-Length': String(len),
+            'Accept-Ranges': 'bytes',
+          },
+        })
+      }
       const buf = fs.readFileSync(filePath)
-      return new Response(buf)
+      return new Response(buf, {
+        status: 200,
+        headers: {
+          'Content-Type': mime,
+          'Content-Length': String(total),
+          'Accept-Ranges': 'bytes',
+        },
+      })
     } catch {
       return new Response('not found', { status: 404 })
     }

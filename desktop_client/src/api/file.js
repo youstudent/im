@@ -9,10 +9,13 @@ import { http } from './http'
  * @param {'image'|'file'|'voice'} type 资源类型
  * @param {number} size 文件字节数
  * @param {string} contentType 文件 MIME 类型（OSS 签名绑定该 Content-Type）
+ * @param {number} duration 语音时长（秒，仅 voice 上报，后端校验 ≤60s）
  * @returns {Promise<{object_key:string,upload_url:string,download_url:string,expire_in:number}>}
  */
-function presign(fileName, type, size, contentType) {
-  return http.post('/files/presign', { file_name: fileName, type, size, content_type: contentType })
+function presign(fileName, type, size, contentType, duration = 0) {
+  const body = { file_name: fileName, type, size, content_type: contentType }
+  if (type === 'voice') body.duration = Number(duration) || 0
+  return http.post('/files/presign', body)
 }
 
 /**
@@ -20,10 +23,11 @@ function presign(fileName, type, size, contentType) {
  * 注意：OSS 预签名签名时绑定了 Content-Type，上传请求必须携带相同的 Content-Type 头，否则签名校验失败。
  * @param {File} file
  * @param {'image'|'file'|'voice'} type
+ * @param {{duration?: number}} meta 语音附加时长（秒）
  */
-export async function uploadFile(file, type = 'file') {
+export async function uploadFile(file, type = 'file', meta = {}) {
   const contentType = file.type || 'application/octet-stream'
-  const presignRes = await presign(file.name, type, file.size, contentType)
+  const presignRes = await presign(file.name, type, file.size, contentType, meta.duration || 0)
   if (!presignRes || !presignRes.upload_url) {
     throw new Error('获取上传链接失败')
   }

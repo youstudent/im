@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog, safeStorage, protocol, Notification, shell, net } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, dialog, safeStorage, protocol, Notification, shell, net, nativeImage } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
@@ -16,10 +16,11 @@ const isDev = process.env.IS_DEV === 'true'
 require('./store/ipc').register()
 
 // ---- 文件缓存协议：wcfile://{hash}.{ext} → 本地缓存文件 ----
-// 必须在 app ready 之前声明 scheme 特权（支持作为 <img> 等资源加载）
+// 必须在 app ready 之前声明 scheme 特权（支持作为 <img> 等资源加载）；
+// stream:true 支持 <video>/<audio> 媒体流式加载（配合处理器的 Range 分段响应）
 const filecache = require('./store/filecache')
 protocol.registerSchemesAsPrivileged([
-  { scheme: filecache.SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: filecache.SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ])
 
 // ---- IPC 通信示例：主进程暴露能力给渲染进程 ----
@@ -98,6 +99,61 @@ ipcMain.handle('shell:open-external', (_event, url) => {
     const u = String(url || '')
     if (!/^https?:\/\//.test(u)) return { ok: false }
     shell.openExternal(u)
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+})
+
+// ---- 任务栏图标未读交互：未读角标（Windows 覆盖图标 / macOS Dock 徽章）+ 任务栏闪烁 ----
+let mainWindow = null
+let lastBadgeCount = -1
+
+function badgeText(count) {
+  if (count <= 0) return ''
+  return count > 99 ? '99+' : String(count)
+}
+
+// 绘制未读角标：纯像素绘制红底白字胶囊 PNG（主进程无 canvas，nativeImage 也不解 SVG，见 badge.js）
+const { renderBadgePNG } = require('./badge')
+function makeBadgeImage(text) {
+  const png = renderBadgePNG(text)
+  if (!png) return null
+  return nativeImage.createFromBuffer(png)
+}
+
+// 设置未读角标：count=0 清除；同值不重复设置（渲染进程会话切换会频繁触发）
+ipcMain.handle('app:badge:set', (_event, arg) => {
+  try {
+    const count = Math.max(0, Number(arg && arg.count) || 0)
+    if (count === lastBadgeCount) return { ok: true }
+    lastBadgeCount = count
+    const text = badgeText(count)
+    if (process.platform === 'darwin' && app.dock) {
+      app.dock.setBadge(text)
+    }
+    const win = mainWindow
+    if (win && process.platform === 'win32') {
+      if (count > 0) {
+        const icon = makeBadgeImage(text)
+        if (icon) win.setOverlayIcon(icon, `${count} 条未读消息`)
+      } else {
+        win.setOverlayIcon(null, '')
+      }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
+})
+
+// 新消息到达且窗口未聚焦：闪烁任务栏按钮（Windows）；窗口重新聚焦时停止
+ipcMain.handle('app:badge:flash', (event) => {
+  try {
+    const win = mainWindow || BrowserWindow.fromWebContents(event.sender)
+    if (win && process.platform === 'win32' && !win.isFocused()) {
+      win.flashFrame(true)
+    }
     return { ok: true }
   } catch {
     return { ok: false }
@@ -229,7 +285,7 @@ ipcMain.handle('updater:download-and-install', async (event, arg) => {
 })
 
 function createWindow() {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 960,
@@ -268,6 +324,13 @@ function createWindow() {
     if (isDev && process.env.OPEN_DEVTOOLS !== '0') {
       mainWindow.webContents.openDevTools({ mode: 'detach' })
     }
+  })
+
+  // 窗口重新聚焦：停止任务栏闪烁（新消息到达时的提醒交互）
+  mainWindow.on('focus', () => {
+    try {
+      if (process.platform === 'win32') mainWindow.flashFrame(false)
+    } catch {}
   })
 
   if (isDev) {

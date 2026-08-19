@@ -453,6 +453,22 @@ var audioExts = map[string]bool{
 // isAudioContent 判断 FILE 消息的 content（资源 URL）是否为音频文件：
 // 录音产物以 FILE(type=3) 发出，按音频后缀识别后会话摘要才能展示 [语音] 而非 [文件]。
 func isAudioContent(content string) bool {
+	return audioExts[contentExt(content)]
+}
+
+// videoExts 视频文件扩展名集合（摘要展示 [视频] 用；音频优先判定，webm 录音不会被误标）。
+var videoExts = map[string]bool{
+	".mp4": true, ".mov": true, ".avi": true, ".mkv": true,
+	".wmv": true, ".flv": true, ".3gp": true, ".m4v": true,
+}
+
+// isVideoContent 判断 FILE 消息的 content（资源 URL）是否为视频文件（按路径后缀识别）。
+func isVideoContent(content string) bool {
+	return videoExts[contentExt(content)]
+}
+
+// contentExt 提取 FILE 消息 content（资源 URL）路径中的扩展名（小写含点，无后缀返回空串）。
+func contentExt(content string) string {
 	p := content
 	if u, err := url.Parse(content); err == nil && u.Path != "" {
 		p = u.Path
@@ -463,9 +479,9 @@ func isAudioContent(content string) bool {
 		p = p[i+1:]
 	}
 	if i := strings.LastIndex(p, "."); i >= 0 {
-		return audioExts[strings.ToLower(p[i:])]
+		return strings.ToLower(p[i:])
 	}
-	return false
+	return ""
 }
 
 // convPreview 根据消息类型生成会话列表最后一条消息的展示文本。
@@ -478,6 +494,9 @@ func convPreview(msgType int8, content string) string {
 	case 3:
 		if isAudioContent(content) {
 			return "[语音]"
+		}
+		if isVideoContent(content) {
+			return "[视频]"
 		}
 		return "[文件]"
 	case 4:
