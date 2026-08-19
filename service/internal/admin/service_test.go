@@ -68,6 +68,13 @@ func (m *mockAdminStore) GetAdminByID(id int64) (*mysql.AdminUser, error) {
 	}
 	return nil, mysql.ErrNotFound
 }
+func (m *mockAdminStore) UpdateAdminPassword(id int64, passwordHash string) error {
+	if m.admin != nil && m.admin.ID == id {
+		m.admin.PasswordHash = passwordHash
+		m.admin.MustChangePwd = 0
+	}
+	return nil
+}
 func (m *mockAdminStore) CreateAppVersion(v *mysql.AppVersion) error {
 	for _, old := range m.versions {
 		if old.Version == v.Version {
@@ -109,6 +116,36 @@ func TestAdminLogin(t *testing.T) {
 	// 密码错误
 	if _, err := svc.Login(&LoginReq{Username: "admin", Password: "wrong"}); err == nil {
 		t.Fatal("expected login failure on wrong password")
+	}
+}
+
+func TestAdminMustChangePwd(t *testing.T) {
+	svc := newTestAdmin()
+	// 标记种子账号：登录返回 must_change_pwd=true
+	svc.store.(*mockAdminStore).admin.MustChangePwd = 1
+	res, err := svc.Login(&LoginReq{Username: "admin", Password: "admin123"})
+	if err != nil || !res.MustChangePwd {
+		t.Fatalf("expected must_change_pwd=true, got %+v err=%v", res, err)
+	}
+	// 旧密码错误拒绝
+	if err := svc.ChangePassword(1, &ChangePwdReq{OldPassword: "wrong", NewPassword: "newpass123"}); err == nil {
+		t.Fatal("expected wrong old password error")
+	}
+	// 弱新密码拒绝（不含数字/长度不足）
+	if err := svc.ChangePassword(1, &ChangePwdReq{OldPassword: "admin123", NewPassword: "abcdefgh"}); err == nil {
+		t.Fatal("expected weak password error")
+	}
+	// 新旧相同拒绝
+	if err := svc.ChangePassword(1, &ChangePwdReq{OldPassword: "admin123", NewPassword: "admin123"}); err == nil {
+		t.Fatal("expected same password error")
+	}
+	// 修改成功：新密码可登录，且标记已清零
+	if err := svc.ChangePassword(1, &ChangePwdReq{OldPassword: "admin123", NewPassword: "newpass123"}); err != nil {
+		t.Fatalf("change password failed: %v", err)
+	}
+	res, err = svc.Login(&LoginReq{Username: "admin", Password: "newpass123"})
+	if err != nil || res.MustChangePwd {
+		t.Fatalf("expected login with new password and flag cleared, got %+v err=%v", res, err)
 	}
 }
 

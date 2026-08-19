@@ -625,3 +625,15 @@ body {
   opacity: 0;
   transform: translateX(-50%) translateY(-8px);
 }
+
+/* 强制改密表单（种子默认账号首次登录） */
+.pwd-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.pwd-error {
+  color: var(--danger, #e5484d);
+  font-size: 13px;
+}

@@ -96,9 +96,13 @@ func main() {
 		logger.Error("init snowflake failed", "error", err)
 		os.Exit(1)
 	}
-	// 初始化默认管理员（表为空时创建 admin/admin123）
+	// 初始化默认管理员（表为空时创建 admin/admin123，并标记首次登录必须改密；
+	// 存量部署中仍使用默认密码的管理员同样置位强制改密标记）
 	if err := seedDefaultAdmin(mysqlDB, sf.NextID); err != nil {
 		logger.Warn("seed default admin failed", "error", err)
+	}
+	if err := flagDefaultPwdAdmins(mysqlDB); err != nil {
+		logger.Warn("flag default password admins failed", "error", err)
 	}
 	authSvc := auth.New(mysqlDB, redisClient, jwtMgr, sf.NextID)
 	authHdlr := auth.NewHandler(authSvc)
@@ -306,6 +310,7 @@ return redis.call('INCR', KEYS[1])
 }
 
 // seedDefaultAdmin 当 admin_users 表为空时创建默认管理员 admin/admin123。
+// 弱口令防护（审计 P0）：种子账号置 must_change_pwd=1，首次登录强制改密。
 func seedDefaultAdmin(db *mysql.DB, genID func() int64) error {
 	count, err := db.CountAdmins()
 	if err != nil {
@@ -319,11 +324,33 @@ func seedDefaultAdmin(db *mysql.DB, genID func() int64) error {
 		return err
 	}
 	return db.CreateAdmin(&mysql.AdminUser{
-		ID:           genID(),
-		Username:     "admin",
-		PasswordHash: hash,
-		Nickname:     "超级管理员",
-		Role:         1,
-		Status:       1,
+		ID:            genID(),
+		Username:      "admin",
+		PasswordHash:  hash,
+		Nickname:      "超级管理员",
+		Role:          1,
+		Status:        1,
+		MustChangePwd: 1,
 	})
+}
+
+// flagDefaultPwdAdmins 启动时检测仍在使用默认密码 admin123 的管理员（老部署升级场景），
+// 对其置位强制改密标记，避免弱口令长期暴露。
+func flagDefaultPwdAdmins(db *mysql.DB) error {
+	admins, err := db.ListAdmins()
+	if err != nil {
+		return err
+	}
+	for _, a := range admins {
+		if a.MustChangePwd == 1 {
+			continue // 已标记，无需重复置位
+		}
+		if pwd.Verify(a.PasswordHash, "admin123") {
+			if err := db.SetAdminMustChangePwd(a.ID); err != nil {
+				return err
+			}
+			log.L().Warn("admin still uses default password, force change on next login", "admin_id", a.ID, "username", a.Username)
+		}
+	}
+	return nil
 }

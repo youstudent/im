@@ -43,6 +43,20 @@ func (h *Handler) Login(c *gin.Context) {
 	resp.OK(c, res)
 }
 
+// ChangePassword 管理员修改自己的密码（种子账号首次登录强制改密走此接口）。
+func (h *Handler) ChangePassword(c *gin.Context) {
+	var req ChangePwdReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if err := h.svc.ChangePassword(adminIDOf(c), &req); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
 // Dashboard 数据看板。
 func (h *Handler) Dashboard(c *gin.Context) {
 	d, err := h.svc.GetDashboard()

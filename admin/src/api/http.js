@@ -21,6 +21,19 @@ export function isAuthed() {
   return !!getToken()
 }
 
+// 强制改密标记（种子默认账号首次登录）：登录时写入，改密成功后清除；
+// 持久化防止刷新/直接导航绕过改密弹窗。
+const MUST_PWD_KEY = 'wc_admin_must_pwd'
+
+export function mustChangePwd() {
+  return localStorage.getItem(MUST_PWD_KEY) === '1'
+}
+
+export function setMustChangePwd(on) {
+  if (on) localStorage.setItem(MUST_PWD_KEY, '1')
+  else localStorage.removeItem(MUST_PWD_KEY)
+}
+
 async function request(path, { method = 'GET', data } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()

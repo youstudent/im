@@ -8,40 +8,57 @@ import (
 
 // AdminUser 管理员。
 type AdminUser struct {
-	ID           int64
-	Username     string
-	PasswordHash string
-	Nickname     string
-	Role         int8
-	Status       int8
-	CreatedAt    time.Time
+	ID            int64
+	Username      string
+	PasswordHash  string
+	Nickname      string
+	Role          int8
+	Status        int8
+	MustChangePwd int8 // 1 首次登录必须修改密码（种子默认账号）
+	CreatedAt     time.Time
+}
+
+// adminCols 管理员查询列（与 scanAdmin 顺序一一对应）。
+const adminCols = `id, username, password_hash, nickname, role, status, must_change_pwd, created_at`
+
+// scanAdmin 按 adminCols 顺序扫描一行管理员记录。
+func scanAdmin(scanner interface{ Scan(dest ...any) error }) (*AdminUser, error) {
+	var a AdminUser
+	if err := scanner.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.Nickname, &a.Role, &a.Status, &a.MustChangePwd, &a.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &a, nil
 }
 
 // GetAdminByUsername 按用户名查管理员。
 func (d *DB) GetAdminByUsername(username string) (*AdminUser, error) {
-	row := d.QueryRow(`SELECT id, username, password_hash, nickname, role, status, created_at FROM admin_users WHERE username = ?`, username)
-	var a AdminUser
-	if err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.Nickname, &a.Role, &a.Status, &a.CreatedAt); err != nil {
-		return nil, err
-	}
-	return &a, nil
+	row := d.QueryRow(`SELECT `+adminCols+` FROM admin_users WHERE username = ?`, username)
+	return scanAdmin(row)
 }
 
 // GetAdminByID 按 ID 查管理员（版本发布记录发布者用）。
 func (d *DB) GetAdminByID(id int64) (*AdminUser, error) {
-	row := d.QueryRow(`SELECT id, username, password_hash, nickname, role, status, created_at FROM admin_users WHERE id = ?`, id)
-	var a AdminUser
-	if err := row.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.Nickname, &a.Role, &a.Status, &a.CreatedAt); err != nil {
-		return nil, err
-	}
-	return &a, nil
+	row := d.QueryRow(`SELECT `+adminCols+` FROM admin_users WHERE id = ?`, id)
+	return scanAdmin(row)
 }
 
 // CreateAdmin 创建管理员。
 func (d *DB) CreateAdmin(a *AdminUser) error {
-	_, err := d.Exec(`INSERT INTO admin_users (id, username, password_hash, nickname, role, status)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		a.ID, a.Username, a.PasswordHash, a.Nickname, a.Role, a.Status)
+	_, err := d.Exec(`INSERT INTO admin_users (id, username, password_hash, nickname, role, status, must_change_pwd)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.Username, a.PasswordHash, a.Nickname, a.Role, a.Status, a.MustChangePwd)
+	return err
+}
+
+// UpdateAdminPassword 更新管理员密码哈希，并清零强制改密标记。
+func (d *DB) UpdateAdminPassword(id int64, passwordHash string) error {
+	_, err := d.Exec(`UPDATE admin_users SET password_hash = ?, must_change_pwd = 0 WHERE id = ?`, passwordHash, id)
+	return err
+}
+
+// SetAdminMustChangePwd 置位强制改密标记（启动时检测到默认密码仍在使用时调用）。
+func (d *DB) SetAdminMustChangePwd(id int64) error {
+	_, err := d.Exec(`UPDATE admin_users SET must_change_pwd = 1 WHERE id = ?`, id)
 	return err
 }
 
@@ -54,18 +71,18 @@ func (d *DB) CountAdmins() (int64, error) {
 
 // ListAdmins 管理员列表。
 func (d *DB) ListAdmins() ([]*AdminUser, error) {
-	rows, err := d.Query(`SELECT id, username, password_hash, nickname, role, status, created_at FROM admin_users ORDER BY id`)
+	rows, err := d.Query(`SELECT ` + adminCols + ` FROM admin_users ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var list []*AdminUser
 	for rows.Next() {
-		var a AdminUser
-		if err := rows.Scan(&a.ID, &a.Username, &a.PasswordHash, &a.Nickname, &a.Role, &a.Status, &a.CreatedAt); err != nil {
+		a, err := scanAdmin(rows)
+		if err != nil {
 			return nil, err
 		}
-		list = append(list, &a)
+		list = append(list, a)
 	}
 	return list, rows.Err()
 }

@@ -4,6 +4,10 @@ export const adminApi = {
   login(username, password) {
     return http.post('/login', { username, password })
   },
+  // 修改自己的密码（种子账号首次登录强制改密）
+  changePassword(oldPassword, newPassword) {
+    return http.post('/password', { old_password: oldPassword, new_password: newPassword })
+  },
   dashboard() {
     return http.get('/dashboard')
   },

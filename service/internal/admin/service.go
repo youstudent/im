@@ -42,6 +42,7 @@ type Store interface {
 	DeleteGroupByGUID(gUID int64) error
 	// 版本发布
 	GetAdminByID(id int64) (*mysql.AdminUser, error)
+	UpdateAdminPassword(id int64, passwordHash string) error
 	CreateAppVersion(v *mysql.AppVersion) error
 	ListAppVersions(offset, limit int) ([]*mysql.AppVersion, error)
 	CountAppVersions() (int64, error)
@@ -110,6 +111,8 @@ type LoginReq struct {
 type LoginResult struct {
 	AccessToken string      `json:"access_token"`
 	Admin       *AdminInfo  `json:"admin"`
+	// 首次登录必须修改密码（种子默认账号）：前端据此强制弹出改密框
+	MustChangePwd bool `json:"must_change_pwd"`
 }
 
 // AdminInfo 管理员信息。
@@ -152,9 +155,63 @@ func (s *Service) Login(req *LoginReq) (*LoginResult, error) {
 		return nil, apperr.WrapInternal("签发令牌失败", err)
 	}
 	return &LoginResult{
-		AccessToken: token,
-		Admin:       &AdminInfo{ID: a.ID, Username: a.Username, Nickname: a.Nickname, Role: a.Role},
+		AccessToken:   token,
+		Admin:         &AdminInfo{ID: a.ID, Username: a.Username, Nickname: a.Nickname, Role: a.Role},
+		MustChangePwd: a.MustChangePwd == 1,
 	}, nil
+}
+
+// ChangePwdReq 修改密码请求。
+type ChangePwdReq struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+// ChangePassword 管理员修改自己的密码：校验旧密码、新密码强度（至少 8 位且含字母和数字，
+// 与用户注册强度一致）、新旧不同；成功后清零强制改密标记。
+func (s *Service) ChangePassword(adminID int64, req *ChangePwdReq) error {
+	if adminID <= 0 {
+		return apperr.Unauthorized("未登录")
+	}
+	if req.OldPassword == "" || req.NewPassword == "" {
+		return apperr.BadRequest("旧密码与新密码不能为空")
+	}
+	if len(req.NewPassword) < 8 || !hasLetterAndDigit(req.NewPassword) {
+		return apperr.BadRequest("新密码至少 8 位，且同时包含字母和数字")
+	}
+	if req.OldPassword == req.NewPassword {
+		return apperr.BadRequest("新密码不能与旧密码相同")
+	}
+	a, err := s.store.GetAdminByID(adminID)
+	if err != nil || a == nil {
+		return apperr.Unauthorized("账号不存在")
+	}
+	if !pwd.Verify(a.PasswordHash, req.OldPassword) {
+		return apperr.BadRequest("旧密码错误")
+	}
+	hash, err := pwd.Hash(req.NewPassword)
+	if err != nil {
+		return apperr.WrapInternal("密码加密失败", err)
+	}
+	if err := s.store.UpdateAdminPassword(adminID, hash); err != nil {
+		return apperr.WrapInternal("修改密码失败", err)
+	}
+	log.L().Info("admin password changed", "admin_id", adminID)
+	return nil
+}
+
+// hasLetterAndDigit 密码强度校验：同时包含字母与数字。
+func hasLetterAndDigit(s string) bool {
+	hasLetter, hasDigit := false, false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			hasLetter = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		}
+	}
+	return hasLetter && hasDigit
 }
 
 // ---- 看板 ----
@@ -335,6 +392,7 @@ func (s *Service) GetGroupMessages(gUID, beforeSeq int64, limit int) ([]*GroupMe
 }
 
 // previewText 生成消息摘要：文本直接返回，媒体消息给占位文案（不暴露原始 URL 语义）。
+// FILE 消息中音频后缀（录音产物）展示为 [语音]，与消息服务 convPreview 一致。
 func previewText(t int8, content string) string {
 	switch t {
 	case 1, 6: // 文本 / 系统消息
@@ -342,6 +400,9 @@ func previewText(t int8, content string) string {
 	case 2:
 		return "[图片]"
 	case 3:
+		if isAudioContent(content) {
+			return "[语音]"
+		}
 		return "[文件]"
 	case 4:
 		return "[语音]"
@@ -350,6 +411,29 @@ func previewText(t int8, content string) string {
 	default:
 		return content
 	}
+}
+
+// adminAudioExts 可作为 FILE 类型发送的音频扩展名集合（与消息服务 audioExts 一致）。
+var adminAudioExts = map[string]bool{
+	".webm": true, ".m4a": true, ".aac": true, ".mp3": true,
+	".wav": true, ".ogg": true, ".flac": true,
+}
+
+// isAudioContent 判断 FILE 消息 content（资源 URL）是否音频文件（按路径后缀识别）。
+func isAudioContent(content string) bool {
+	p := content
+	if u, err := url.Parse(content); err == nil && u.Path != "" {
+		p = u.Path
+	} else {
+		p, _, _ = strings.Cut(p, "?")
+	}
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		p = p[i+1:]
+	}
+	if i := strings.LastIndex(p, "."); i >= 0 {
+		return adminAudioExts[strings.ToLower(p[i:])]
+	}
+	return false
 }
 
 // ---- 客户端版本发布（检查更新） ----

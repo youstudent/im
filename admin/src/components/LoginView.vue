@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { adminApi } from '../api/admin'
-import { setToken } from '../api/http'
+import { setToken, setMustChangePwd } from '../api/http'
 
 const router = useRouter()
 
@@ -16,6 +16,8 @@ async function doLogin() {
   try {
     const res = await adminApi.login(loginForm.value.username, loginForm.value.password)
     setToken(res.access_token)
+    // 种子默认账号：服务端返回强制改密标记，进入后台后弹不可关闭的改密框
+    setMustChangePwd(!!res.must_change_pwd)
     router.replace('/dashboard')
   } catch (e) {
     loginError.value = e.message || '登录失败'

@@ -126,6 +126,8 @@ func NewRouter(deps *Dependencies, mode string) *gin.Engine {
 		adminApi.POST("/login", deps.AdminHdlr.Login)
 		adminGroup := adminApi.Group("", middleware.AdminAuth(deps.JWT))
 		{
+			// 修改自己的密码（种子账号首次登录强制改密）
+			adminGroup.POST("/password", deps.AdminHdlr.ChangePassword)
 			adminGroup.GET("/dashboard", deps.AdminHdlr.Dashboard)
 			adminGroup.GET("/users", deps.AdminHdlr.ListUsers)
 			adminGroup.DELETE("/users/:uid/disable", deps.AdminHdlr.DisableUser)
