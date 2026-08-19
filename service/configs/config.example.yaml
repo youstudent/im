@@ -40,6 +40,7 @@ log:
   output: stdout
 
 gateway:
+  node: ""                # 节点标识（跨节点路由），缺省自动取主机名；多实例部署必须唯一
   heartbeat_interval: 30
   write_wait: 10
   pong_wait: 60

@@ -222,7 +222,7 @@ func (d *DB) SearchMessages(keyword string, msgType int8, convIDs []int64, limit
 		shard := Shard(id, ShardCount)
 		buckets[shard] = append(buckets[shard], id)
 	}
-	like := "%" + keyword + "%"
+	like := "%" + EscapeLike(keyword) + "%" // 审计 L1：转义通配符，防构造全表慢查
 	var results []*SearchResult
 	for shard, ids := range buckets {
 		table := TableName("messages", shard)

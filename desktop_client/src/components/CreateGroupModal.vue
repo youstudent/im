@@ -36,20 +36,31 @@ function toggleMember(uid) {
 }
 
 // 选择头像文件并上传 OSS（获取固定 URL）
+// accept 与后端图片白名单对齐（不用 image/*，svg 属后端危险类型黑名单）
+const AVATAR_ACCEPT = '.jpg,.jpeg,.png,.gif,.bmp,.webp,.heic,.heif,.tiff,.ico'
 async function pickAvatar() {
   const input = document.createElement('input')
   input.type = 'file'
-  input.accept = 'image/*'
+  input.accept = AVATAR_ACCEPT
   input.onchange = async () => {
     const f = input.files && input.files[0]
     if (!f) return
+    // 扩展名兜底校验（系统选择器可绕过 accept）
+    const ext = (f.name || '').toLowerCase().split('.').pop()
+    const allowed = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif', 'tiff', 'ico']
+    if (!ext || !allowed.includes(ext)) {
+      errorMsg.value = '仅支持上传图片文件（jpg/png/gif/webp 等）'
+      return
+    }
     avatarUploading.value = true
+    errorMsg.value = ''
     try {
       const { downloadUrl } = await fileApi.uploadFile(f, 'image')
       avatarUrl.value = downloadUrl
       avatarType.value = 'upload'
     } catch (e) {
       console.warn('[CreateGroupModal] 头像上传失败:', e?.message || e)
+      errorMsg.value = e?.message || '头像上传失败'
     } finally {
       avatarUploading.value = false
     }

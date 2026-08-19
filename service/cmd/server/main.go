@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -103,17 +104,54 @@ func main() {
 	authHdlr := auth.NewHandler(authSvc)
 
 	// 6. 消息服务 + WS 网关（阶段三）
-	// publish 回调在网关就绪后绑定，用于向接收方投递消息。
+	// publish 回调用于向接收方投递 HTTP 链路发送的消息（WS 链路在 adapter 中推送）。
 	var hub *gateway.Hub
+	var socialSvc *social.Service // publish 需查群成员，social 在后面初始化，先声明后赋值
 	var ossSigner message.OSSSigner
 	if ossClient != nil {
 		ossSigner = ossClient
 	}
 	msgSvc := message.New(mysqlDB, sf.NextID, func(convID int64, msg *message.MessageDTO) {
-		if hub != nil {
-			// 通过 HTTP 发送的消息在这里推送（WS 链路在 adapter 中推送）
+		if hub == nil {
+			return
+		}
+		// 修复审计 P1：HTTP 发送的消息此前无推送，接收方收不到实时消息。
+		// 按会话类型分发：单聊推对端，群聊推除发送者外的全体成员；hub.Push 自动处理离线队列与跨节点路由。
+		conv, err := mysqlDB.GetConversationByID(convID)
+		if err != nil || conv == nil {
+			return
+		}
+		frame := &gateway.Frame{Ver: 1, Type: gateway.FrameMsgPush, Seq: 0, Body: msg}
+		if conv.Type == 1 {
+			// 对端 = 会话中非发送方的一方（单聊双方共享 conv_id，行可能是任一视角）
+			peer := conv.OwnerUID
+			if peer == msg.SenderUID {
+				peer = conv.TargetID
+			}
+			if peer > 0 && peer != msg.SenderUID {
+				hub.Push(peer, frame)
+			}
+			return
+		}
+		if socialSvc == nil {
+			return
+		}
+		members, err := socialSvc.GetGroupMembers(conv.TargetID)
+		if err != nil {
+			return
+		}
+		for _, uid := range members {
+			if uid != msg.SenderUID {
+				hub.Push(uid, frame)
+			}
 		}
 	}, ossSigner)
+	// extra.url 域名白名单（审计 H4）：媒体消息资源必须来自本 OSS Bucket 域名，
+	// 防伪造文件消息指向外部 URL 诱导接收方下载恶意文件；OSS 未配置时不校验（降级放行）。
+	if cfg.OSS.Bucket != "" && cfg.OSS.Endpoint != "" {
+		endpoint := strings.TrimPrefix(strings.TrimPrefix(cfg.OSS.Endpoint, "https://"), "http://")
+		msgSvc.SetAllowedMediaHosts([]string{cfg.OSS.Bucket + "." + endpoint})
+	}
 	// 原子 seq 取号：Redis INCR 计数器（首次使用时以 DB 当前最大 seq 初始化）。
 	// 修复审计 P0：NextSeq=MAX+1 两步非原子导致并发同会话发送 seq 冲突丢消息（实测 200 并发丢 86%）；
 	// Redis 不可用时 service 层自动回退本地 MAX+1，唯一键冲突时重试。
@@ -139,7 +177,16 @@ return redis.call('INCR', KEYS[1])
 	msgHdlr := message.NewHandler(msgSvc)
 
 	adapter := gateway.NewAdapter(msgSvc, nil)
-	wsServer := gateway.NewServer(redisClient, jwtMgr, adapter, "node-1", cfg.Gateway)
+	// 节点 ID（审计 P1）：多实例部署时同名节点会导致跨节点路由错乱，优先读配置，缺省用主机名
+	nodeID := cfg.Gateway.Node
+	if nodeID == "" {
+		if hn, herr := os.Hostname(); herr == nil && hn != "" {
+			nodeID = hn
+		} else {
+			nodeID = "node-1"
+		}
+	}
+	wsServer := gateway.NewServer(redisClient, jwtMgr, adapter, nodeID, cfg.Gateway)
 	hub = wsServer.Hub()
 	// 用户退出登录时断开其 WS 连接
 	authSvc.SetDisconnectWS(func(uid int64) {
@@ -147,7 +194,7 @@ return redis.call('INCR', KEYS[1])
 	})
 
 	// 7. 社交模块（阶段四）—— notifier 通过 WS 网关实时推送好友/群事件
-	socialSvc := social.New(mysqlDB, sf.NextID, func(uid int64, event string, data interface{}) {
+	socialSvc = social.New(mysqlDB, sf.NextID, func(uid int64, event string, data interface{}) {
 		if hub != nil {
 			hub.PublishLocal(uid, &gateway.Frame{Ver: 1, Type: "social", Seq: 0, Body: map[string]interface{}{"event": event, "data": data}})
 		}
@@ -187,6 +234,14 @@ return redis.call('INCR', KEYS[1])
 
 	// 8. 管理后台（阶段五）
 	adminSvc := admin.New(mysqlDB, jwtMgr, sf.NextID)
+	// 管理端登录限流（审计 H2）：同一用户名窗口内最多 5 次尝试，防爆破管理员密码
+	adminSvc.SetLoginCache(redisClient)
+	// 版本下载地址域名白名单（审计 L2）：发布接口强制 https + 可信域名（复用 OSS Bucket 域名），
+	// 防发布指向恶意域的安装包（客户端自动更新会下载执行）；OSS 未配置时仅强制 https
+	if cfg.OSS.Bucket != "" && cfg.OSS.Endpoint != "" {
+		endpoint := strings.TrimPrefix(strings.TrimPrefix(cfg.OSS.Endpoint, "https://"), "http://")
+		adminSvc.SetAllowedDownloadHosts([]string{cfg.OSS.Bucket + "." + endpoint})
+	}
 	// 禁用用户时：若其在线，立刻踢下线（推送 kick 帧后断开连接，客户端回到登录页）
 	adminSvc.SetKickFunc(func(uid int64, reason string) {
 		if hub != nil {
@@ -233,12 +288,15 @@ return redis.call('INCR', KEYS[1])
 		}
 	}()
 
-	// 6. 优雅退出
+	// 11. 优雅退出：先断全部 WS 长连接（触发 readLoop 退出并清理在线状态），再关 HTTP
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	logger.Info("shutting down server")
 
+	if hub != nil {
+		hub.DisconnectAll()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {

@@ -21,6 +21,13 @@ func NewHandler(svc *Service) *Handler {
 	return &Handler{svc: svc}
 }
 
+// adminIDOf 从上下文取当前管理员 ID（AdminAuth 中间件已注入），供审计日志记录操作人。
+func adminIDOf(c *gin.Context) int64 {
+	v, _ := c.Get(string(middleware.CtxAdminIDKey))
+	id, _ := v.(int64)
+	return id
+}
+
 // Login 管理员登录。
 func (h *Handler) Login(c *gin.Context) {
 	var req LoginReq
@@ -70,7 +77,7 @@ func (h *Handler) ListUsers(c *gin.Context) {
 // DisableUser 禁用用户（若在线则踢下线）。
 func (h *Handler) DisableUser(c *gin.Context) {
 	uid, _ := strconv.ParseInt(c.Param("uid"), 10, 64)
-	if err := h.svc.DisableUser(uid); err != nil {
+	if err := h.svc.DisableUser(adminIDOf(c), uid); err != nil {
 		resp.Fail(c, err)
 		return
 	}
@@ -80,7 +87,7 @@ func (h *Handler) DisableUser(c *gin.Context) {
 // EnableUser 启用用户。
 func (h *Handler) EnableUser(c *gin.Context) {
 	uid, _ := strconv.ParseInt(c.Param("uid"), 10, 64)
-	if err := h.svc.EnableUser(uid); err != nil {
+	if err := h.svc.EnableUser(adminIDOf(c), uid); err != nil {
 		resp.Fail(c, err)
 		return
 	}
@@ -106,7 +113,7 @@ func (h *Handler) ListGroups(c *gin.Context) {
 // DeleteGroup 解散群。
 func (h *Handler) DeleteGroup(c *gin.Context) {
 	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
-	if err := h.svc.DeleteGroup(gUID); err != nil {
+	if err := h.svc.DeleteGroup(adminIDOf(c), gUID); err != nil {
 		resp.Fail(c, err)
 		return
 	}
@@ -130,8 +137,7 @@ func (h *Handler) GroupMessages(c *gin.Context) {
 
 // PublishVersion 发布新版本（管理端）。
 func (h *Handler) PublishVersion(c *gin.Context) {
-	adminID, _ := c.Get(string(middleware.CtxAdminIDKey))
-	id, _ := adminID.(int64)
+	id := adminIDOf(c)
 	var req PublishVersionReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))

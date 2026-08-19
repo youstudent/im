@@ -244,7 +244,21 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // 审计 M4：渲染进程沙箱化，预加载脚本仅可用受限 Electron API（本项目 preload 只用
+      // contextBridge/ipcRenderer，满足沙箱要求），即使未来出现 XSS 也难以触及 Node 能力
+      sandbox: true,
     },
+  })
+
+  // 审计 M4（官方安全检查清单）：阻断一切新窗口打开，外部链接一律走 shell:open-external
+  // （主进程校验 http/https 后用系统浏览器打开），防恶意内容自行弹出 Electron 窗口
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // 阻断页面内导航：仅允许应用自身页面（生产 file:// / 开发 Vite 地址），
+  // 防止潜在 XSS 把主窗口导航到钓鱼页面或本地敏感文件
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isDev && url.startsWith('http://localhost:5173')) return
+    if (!isDev && url.startsWith('file://')) return
+    event.preventDefault()
   })
 
   mainWindow.once('ready-to-show', () => {

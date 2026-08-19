@@ -149,19 +149,26 @@ const messageRepo = {
       .sort((a, b) => (a.created_at - b.created_at) || ((a.seq || Number.MAX_SAFE_INTEGER) - (b.seq || Number.MAX_SAFE_INTEGER)))
   },
 
-  // 全局消息搜索（查找聊天记录）：按关键字 LIKE 匹配 content，跨全部会话，时间倒序。
+  // 消息搜索（查找聊天记录）：按关键字 LIKE 匹配 content，时间倒序。
+  // convId 非空时仅搜该会话（当前会话内查找）；否则跨全部会话。
   // type 过滤：2 图片 / 3 文件 / 4 链接（内容含 URL）；排除不落盘会话、已撤回与系统消息；
   // 仅搜已同步消息（seq>0），避免 pending 行重复命中。
-  search(keyword, { type, limit } = {}) {
+  // offset/limit 支持滚动分页；排序加 seq/local_id 次级键，保证同秒消息翻页顺序稳定。
+  search(keyword, { type, limit, convId, offset } = {}) {
     const db = getDb()
     if (!db) return []
     const lim = Math.max(1, Math.min(Number(limit) || 50, 200))
+    const off = Math.max(0, Number(offset) || 0)
     const params = []
     let sql = `
       SELECT m.* FROM messages m
       JOIN conversations c ON c.id = m.conv_id
       WHERE COALESCE(c.no_persist, 0) != 1 AND m.status != 1 AND m.type != 6 AND m.seq > 0
     `
+    if (convId != null && String(convId) !== '') {
+      sql += ' AND m.conv_id = ?'
+      params.push(String(convId))
+    }
     const t = Number(type) || 0
     if (t === 2 || t === 3) {
       sql += ' AND m.type = ?'
@@ -176,8 +183,8 @@ const messageRepo = {
       sql += " AND m.content LIKE ? ESCAPE '\\'"
       params.push(`%${escaped}%`)
     }
-    sql += ' ORDER BY m.created_at DESC LIMIT ?'
-    params.push(lim)
+    sql += ' ORDER BY m.created_at DESC, m.seq DESC, m.local_id DESC LIMIT ? OFFSET ?'
+    params.push(lim, off)
     return db.prepare(sql).all(...params)
   },
 

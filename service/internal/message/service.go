@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/rand"
+	"net/url"
 	"strings"
 	"time"
 
@@ -71,7 +72,15 @@ type Service struct {
 	limiter  *rateLimiter // 消息频率风控
 	groupMembers func(gUID int64) ([]int64, error) // 可选；查询群成员 uid 列表（由 social 注入），用于群聊同步各成员会话最后消息
 	seqGen func(convID int64) (int64, error) // 可选；原子 seq 取号源（Redis INCR），nil 时回退本地 MAX+1
+	mediaHosts map[string]bool // 可选；extra.url 允许的媒体资源域名白名单（OSS），空时不校验
 }
+
+// 输入长度约束（审计 H3）：防通过 HTTP 通道提交超大消息体造成存储膨胀/慢查询滥用。
+// WS 通道另有 64KB 帧上限，HTTP 通道此前无任何限制，故在服务层统一拦截。
+const (
+	maxContentRunes = 4000 // 文本内容上限 4000 字符
+	maxExtraBytes   = 2048 // extra JSON 上限 2KB（图片/文件元数据远小于此）
+)
 
 // SetSeqGen 注入原子 seq 取号源（由装配层用 Redis 实现）。
 // 修复审计 P0：NextSeq=SELECT MAX+INSERT 两步非原子，并发同会话发送时 seq 冲突丢消息。
@@ -103,6 +112,19 @@ func New(store Store, genID func() int64, publish Publish, oss OSSSigner) *Servi
 // SetOSSSigner 运行时注入 OSS 签名能力（可在服务启动后调用）。
 func (s *Service) SetOSSSigner(oss OSSSigner) {
 	s.oss = oss
+}
+
+// SetAllowedMediaHosts 注入 extra.url 域名白名单（审计 H4）：媒体消息的资源地址必须来自
+// 可信 OSS 域名，防止伪造文件消息指向任意外部 URL 诱导接收方下载/打开恶意文件。
+// 白名单为空时不校验（OSS 未配置降级，不阻断主流程）。
+func (s *Service) SetAllowedMediaHosts(hosts []string) {
+	m := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			m[h] = true
+		}
+	}
+	s.mediaHosts = m
 }
 
 // SetPushFunc 运行时注入按 uid 推送能力（系统消息等多接收方投递）。
@@ -227,6 +249,13 @@ func (s *Service) Send(senderUID int64, req *SendReq) (*MessageDTO, bool, error)
 	}
 	if req.Content == "" {
 		return nil, false, apperr.BadRequest("消息内容不能为空")
+	}
+	// 长度约束（审计 H3）：content/extra 超限直接拒绝
+	if len([]rune(req.Content)) > maxContentRunes {
+		return nil, false, apperr.BadRequest("消息内容过长（上限 4000 字）")
+	}
+	if err := validateExtra(req.Extra, s.mediaHosts); err != nil {
+		return nil, false, err
 	}
 	// 6.2 频率风控：同一用户单位时间窗口内发送超限则拒绝（limiter 为 nil 时不启用，便于测试）
 	if s.limiter != nil {
@@ -817,4 +846,30 @@ func preview(content string) string {
 		return string(r[:50]) + "…"
 	}
 	return content
+}
+
+// validateExtra 校验消息扩展字段（审计 H3/H4）：
+//   - 长度不超 maxExtraBytes，且必须为合法 JSON 对象（客户端按结构化元数据消费）；
+//   - 携带 url 时必须是 https 且域名在 mediaHosts 白名单内（白名单为空时放行，
+//     兼容 OSS 未配置部署），拦截伪造的外部资源地址。
+func validateExtra(extra string, mediaHosts map[string]bool) error {
+	if extra == "" {
+		return nil
+	}
+	if len(extra) > maxExtraBytes {
+		return apperr.BadRequest("消息扩展信息过大（上限 2KB）")
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(extra), &m); err != nil {
+		return apperr.BadRequest("消息扩展信息格式错误")
+	}
+	rawURL, _ := m["url"].(string)
+	if rawURL == "" || len(mediaHosts) == 0 {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "https" || !mediaHosts[strings.ToLower(u.Hostname())] {
+		return apperr.BadRequest("媒体资源地址不可信，发送失败")
+	}
+	return nil
 }

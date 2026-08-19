@@ -364,6 +364,27 @@ func TestSendFriendRequestGuard(t *testing.T) {
 	}
 }
 
+// TestSendFriendRequestMessageLimit 验证申请验证消息长度上限（防超大字符串冲刷申请/通知表）。
+func TestSendFriendRequestMessageLimit(t *testing.T) {
+	svc, store := newTestSvc()
+	store.users[1] = &mysql.User{UID: 1, Nickname: "A"}
+	store.users[2] = &mysql.User{UID: 2, Nickname: "B"}
+
+	// 超限拒绝（含首尾空白按去空白后长度计）
+	long := strings.Repeat("长", friendReqMsgMaxRunes+1)
+	if err := svc.SendFriendRequest(1, 2, "  "+long+"  "); err == nil || !strings.Contains(err.Error(), "过长") {
+		t.Fatalf("超长验证消息应被拒绝, got: %v", err)
+	}
+	// 恰好等于上限应放行
+	if err := svc.SendFriendRequest(1, 2, strings.Repeat("长", friendReqMsgMaxRunes)); err != nil {
+		t.Fatalf("等于上限的验证消息应允许: %v", err)
+	}
+	// 超限被拒后不应产生申请记录（仅等于上限那一条）
+	if n := len(store.requests); n != 1 {
+		t.Fatalf("requests=%d, want 1（超长拦截不应落库）", n)
+	}
+}
+
 func TestSearchUser(t *testing.T) {
 	svc, store := newTestSvc()
 	store.users[1] = &mysql.User{UID: 1, Account: "13800000001", Nickname: "张三"}

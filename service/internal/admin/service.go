@@ -3,11 +3,14 @@ package admin
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	apperr "im/service/internal/pkg/err"
 	"im/service/internal/pkg/jwt"
+	"im/service/internal/pkg/log"
 	"im/service/internal/pkg/pwd"
 	"im/service/internal/store/mysql"
 )
@@ -51,6 +54,40 @@ type Service struct {
 	jwt   *jwt.Manager
 	genID func() int64
 	kick  func(uid int64, reason string) // 可选：禁用时踢该用户下线（由网关注入）
+	loginCache LoginCache // 可选：登录限流缓存（Redis），nil 时不限流
+	downloadHosts map[string]bool // 可选：版本下载地址域名白名单，空时仅校验 https 协议
+}
+
+// SetAllowedDownloadHosts 注入版本下载地址域名白名单（审计 L2，由装配层用 OSS 域名注入）。
+// 白名单为空时仅强制 https，不阻断未配置 OSS 的部署。
+func (s *Service) SetAllowedDownloadHosts(hosts []string) {
+	m := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			m[h] = true
+		}
+	}
+	s.downloadHosts = m
+}
+
+// LoginCache 管理端登录限流依赖的缓存接口（复用 Redis IncrWithTTL）。
+type LoginCache interface {
+	IncrWithTTL(key string, ttl time.Duration) (int64, error)
+	Del(key string) error
+}
+
+// 管理端登录限流（审计 H2）：防爆破管理员密码（管理员可禁用用户/解散群/发布新版本，
+// 是供应链入口）；窗口内尝试次数超限直接拒绝，登录成功清零；缓存不可用时放行不阻断。
+const (
+	adminLoginLimitMax    = 5
+	adminLoginLimitWindow = 15 * time.Minute
+)
+
+func adminLoginLimitKey(username string) string { return "admin:login:limit:" + username }
+
+// SetLoginCache 运行时注入登录限流缓存（由装配层用 Redis 实现）。
+func (s *Service) SetLoginCache(c LoginCache) {
+	s.loginCache = c
 }
 
 // New 创建管理后台服务。
@@ -88,6 +125,12 @@ func (s *Service) Login(req *LoginReq) (*LoginResult, error) {
 	if req.Username == "" || req.Password == "" {
 		return nil, apperr.BadRequest("用户名或密码不能为空")
 	}
+	// 登录限流（审计 H2）：在查库前拦截，防密码爆破与账号枚举；限流不可用时放行
+	if s.loginCache != nil {
+		if n, err := s.loginCache.IncrWithTTL(adminLoginLimitKey(req.Username), adminLoginLimitWindow); err == nil && n > adminLoginLimitMax {
+			return nil, apperr.TooManyRequests("登录尝试过于频繁，请 15 分钟后再试")
+		}
+	}
 	a, err := s.store.GetAdminByUsername(req.Username)
 	if err != nil {
 		return nil, apperr.Unauthorized("用户名或密码错误")
@@ -98,6 +141,12 @@ func (s *Service) Login(req *LoginReq) (*LoginResult, error) {
 	if !pwd.Verify(a.PasswordHash, req.Password) {
 		return nil, apperr.Unauthorized("用户名或密码错误")
 	}
+	// 登录成功：清零失败计数
+	if s.loginCache != nil {
+		_ = s.loginCache.Del(adminLoginLimitKey(req.Username))
+	}
+	// 审计日志（审计 L7）：管理员登录留痕
+	log.L().Info("admin login", "admin_id", a.ID, "username", a.Username)
 	token, err := s.jwt.GenerateAdmin(a.ID)
 	if err != nil {
 		return nil, apperr.WrapInternal("签发令牌失败", err)
@@ -176,20 +225,25 @@ func (s *Service) ListUsers(offset, limit int, keyword string, status int64) ([]
 	return out, nil
 }
 
-// DisableUser 禁用用户账号；若用户在线，立刻将其踢下线。
-func (s *Service) DisableUser(uid int64) error {
+// DisableUser 禁用用户账号（审计 L7：operatorID 为操作管理员，写入审计日志）；若用户在线，立刻将其踢下线。
+func (s *Service) DisableUser(operatorID, uid int64) error {
 	if err := s.store.DisableUser(uid); err != nil {
 		return err
 	}
+	log.L().Info("admin op: disable user", "admin_id", operatorID, "target_uid", uid)
 	if s.kick != nil {
 		s.kick(uid, "账号已被管理员禁用")
 	}
 	return nil
 }
 
-// EnableUser 启用用户账号。
-func (s *Service) EnableUser(uid int64) error {
-	return s.store.EnableUser(uid)
+// EnableUser 启用用户账号（审计 L7：操作留痕）。
+func (s *Service) EnableUser(operatorID, uid int64) error {
+	if err := s.store.EnableUser(uid); err != nil {
+		return err
+	}
+	log.L().Info("admin op: enable user", "admin_id", operatorID, "target_uid", uid)
+	return nil
 }
 
 // ---- 群组管理 ----
@@ -219,9 +273,13 @@ func (s *Service) ListGroups(offset, limit int, keyword string) ([]*GroupDTO, er
 	return out, nil
 }
 
-// DeleteGroup 解散群。
-func (s *Service) DeleteGroup(gUID int64) error {
-	return s.store.DeleteGroupByGUID(gUID)
+// DeleteGroup 解散群（审计 L7：操作留痕）。
+func (s *Service) DeleteGroup(operatorID, gUID int64) error {
+	if err := s.store.DeleteGroupByGUID(gUID); err != nil {
+		return err
+	}
+	log.L().Info("admin op: delete group", "admin_id", operatorID, "target_g_uid", gUID)
+	return nil
 }
 
 // ---- 群聊天记录 ----
@@ -327,6 +385,13 @@ func (s *Service) PublishVersion(adminID int64, req *PublishVersionReq) error {
 	if downloadURL == "" {
 		return apperr.BadRequest("下载地址不能为空")
 	}
+	// 下载地址校验（审计 L2）：强制 https；白名单已注入时域名必须可信，
+	// 防管理端被攻破/误操作后发布指向恶意域的安装包（客户端自动更新直接执行）
+	if u, err := url.Parse(downloadURL); err != nil || u.Scheme != "https" || u.Host == "" {
+		return apperr.BadRequest("下载地址必须为合法的 https 链接")
+	} else if len(s.downloadHosts) > 0 && !s.downloadHosts[strings.ToLower(u.Hostname())] {
+		return apperr.BadRequest("下载地址域名不在可信白名单内")
+	}
 	// 供应链安全（审计 P1）：强制要求安装包摘要，客户端自动更新下载后校验，防篡改/投毒
 	sha := strings.ToLower(strings.TrimSpace(req.Sha256))
 	if !sha256Re.MatchString(sha) {
@@ -350,6 +415,8 @@ func (s *Service) PublishVersion(adminID int64, req *PublishVersionReq) error {
 		}
 		return apperr.WrapInternal("发布版本失败", err)
 	}
+	// 审计日志（审计 L7）：版本发布属供应链操作，必须留痕
+	log.L().Info("admin op: publish version", "admin_id", adminID, "version", version, "url", downloadURL)
 	return nil
 }
 

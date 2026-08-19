@@ -165,3 +165,13 @@ func Shard(convID int64, shardCount int) int {
 func TableName(base string, shard int) string {
 	return strings.ToLower(fmt.Sprintf("%s_%d", base, shard))
 }
+
+// EscapeLike 转义 LIKE 通配符（审计 L1）：参数化查询已防注入，但用户传入的 %/_ 会
+// 被当通配符解释（如传 "%%" 变全表扫描慢查）。MySQL 默认以 \\ 为 LIKE 转义符，
+// 先转义反斜杠本身再转义通配符，保证关键字按字面匹配。
+func EscapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}

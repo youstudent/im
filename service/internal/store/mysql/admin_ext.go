@@ -11,7 +11,7 @@ func (d *DB) ListUsers(offset, limit int, keyword string, status int64) ([]*User
 	var args []any
 	if keyword != "" {
 		conds = append(conds, `(nickname LIKE ? OR account LIKE ?)`)
-		like := "%" + keyword + "%"
+		like := "%" + EscapeLike(keyword) + "%"
 		args = append(args, like, like)
 	}
 	if status > 0 {
@@ -50,7 +50,7 @@ func (d *DB) CountUsersTotal(keyword string, status int64) (int64, error) {
 	var args []any
 	if keyword != "" {
 		conds = append(conds, `(nickname LIKE ? OR account LIKE ?)`)
-		like := "%" + keyword + "%"
+		like := "%" + EscapeLike(keyword) + "%"
 		args = append(args, like, like)
 	}
 	if status > 0 {
@@ -92,7 +92,7 @@ func (d *DB) ListAllGroups(offset, limit int, keyword string) ([]*Group, error) 
 	var args []any
 	if keyword != "" {
 		q += " WHERE g.name LIKE ? OR CAST(g.g_uid AS CHAR) LIKE ?"
-		like := "%" + keyword + "%"
+		like := "%" + EscapeLike(keyword) + "%"
 		args = append(args, like, like)
 	}
 	q += " ORDER BY g.g_uid DESC LIMIT ?, ?"
@@ -119,7 +119,7 @@ func (d *DB) CountGroupsTotal(keyword string) (int64, error) {
 	var args []any
 	if keyword != "" {
 		q += " WHERE name LIKE ? OR CAST(g_uid AS CHAR) LIKE ?"
-		like := "%" + keyword + "%"
+		like := "%" + EscapeLike(keyword) + "%"
 		args = append(args, like, like)
 	}
 	var n int64

@@ -62,8 +62,8 @@ contextBridge.exposeInMainWorld('store', {
   messages: {
     list: (convId, { beforeSeq, limit } = {}) =>
       ipcRenderer.invoke('store:messages:list', { convId, beforeSeq, limit }),
-    search: (keyword, { type, limit } = {}) =>
-      ipcRenderer.invoke('store:messages:search', { keyword, type, limit }),
+    search: (keyword, { type, limit, convId, offset } = {}) =>
+      ipcRenderer.invoke('store:messages:search', { keyword, type, limit, convId, offset }),
     upsert: (msgs) => ipcRenderer.invoke('store:messages:upsert', { msgs }),
     appendPending: (msg) => ipcRenderer.invoke('store:messages:append-pending', { msg }),
     setSyncState: (localId, state, extra = {}) =>

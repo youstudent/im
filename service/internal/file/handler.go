@@ -42,12 +42,27 @@ type PresignReq struct {
 
 // 上传安全约束（审计 P1）：
 //   - 用户端黑名单拦截可在浏览器直接执行/触发下载的危险类型（公共读 Bucket 上传 html/svg 即存储型 XSS）；
+//   - image 类型仅允许图片扩展名（与桌面端白名单对齐，防止以图片名义上传任意文件）；
 //   - 大小上限防滥用；管理端仅允许安装包类型。
 var dangerousExt = map[string]bool{
 	".html": true, ".htm": true, ".svg": true, ".xhtml": true, ".mht": true, ".mhtml": true,
-	".js": true, ".mjs": true, ".php": true, ".jsp": true, ".asp": true, ".aspx": true,
-	".sh": true, ".bat": true, ".cmd": true, ".ps1": true, ".vbs": true,
+	".js": true, ".mjs": true, ".jse": true, ".php": true, ".jsp": true, ".asp": true, ".aspx": true,
+	".sh": true, ".bat": true, ".cmd": true, ".ps1": true, ".psm1": true, ".vbs": true, ".vbe": true,
+	".wsf": true, ".wsh": true, ".sct": true, ".hta": true, ".cpl": true, ".msc": true, ".inf": true,
 	".exe": true, ".msi": true, ".scr": true, ".dll": true, ".com": true, ".pif": true,
+	".lnk": true, ".url": true, ".reg": true, ".chm": true, ".jar": true, ".gadget": true, ".application": true,
+	// 宏文档/加载项：可在 Office 内执行宏代码
+	".docm": true, ".xlsm": true, ".pptm": true, ".dotm": true, ".xlam": true,
+	// 磁盘镜像/虚拟磁盘：可绕过 Windows 下载标记（Mark of the Web）
+	".iso": true, ".img": true, ".vhd": true, ".vhdx": true,
+	// Windows 库/设置文件：已知本地提权/远程代码执行载体
+	".library-ms": true, ".searchconnector-ms": true, ".settingcontent-ms": true, ".theme": true,
+}
+
+// imageExtWhitelist 图片类型上传允许的扩展名（与桌面端"发送图片"白名单一致）。
+var imageExtWhitelist = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".bmp": true,
+	".webp": true, ".heic": true, ".heif": true, ".tiff": true, ".ico": true,
 }
 
 const maxUserUploadSize = 200 << 20 // 用户端单文件上限 200MB
@@ -78,8 +93,13 @@ func (h *Handler) Presign(c *gin.Context) {
 
 // PresignForAdmin 管理端上传预签名（安装包等），objectKey 归到 installer/ 目录并按管理员 ID 隔离。
 func (h *Handler) PresignForAdmin(c *gin.Context) {
-	adminID, _ := c.Get(string(middleware.CtxAdminIDKey))
+	adminID, ok := c.Get(string(middleware.CtxAdminIDKey))
 	id, _ := adminID.(int64)
+	// 审计 L4：身份缺失/断言失败时直接拒绝，防多管理员文件混入同一 admin0/ 目录
+	if !ok || id <= 0 {
+		resp.Fail(c, apperr.Unauthorized("无法获取管理员身份"))
+		return
+	}
 	h.presignFor(c, fmt.Sprintf("admin%d", id), "installer", true)
 }
 
@@ -114,6 +134,11 @@ func (h *Handler) presignFor(c *gin.Context, owner, dir string, isAdmin bool) {
 			return
 		}
 	} else {
+		// 图片类型仅允许图片扩展名（与桌面端白名单对齐）
+		if typ == "image" && !imageExtWhitelist[ext] {
+			resp.Fail(c, apperr.BadRequest("仅支持上传图片文件（jpg/png/gif/webp 等）"))
+			return
+		}
 		if dangerousExt[ext] {
 			resp.Fail(c, apperr.BadRequest("不支持上传该类型文件"))
 			return

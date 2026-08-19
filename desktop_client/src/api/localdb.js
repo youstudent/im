@@ -80,9 +80,10 @@ export const localdb = {
     async list(convId, { beforeSeq, limit } = {}) {
       return unwrap(await invoke('messages', 'list', convId, { beforeSeq, limit }), []) || []
     },
-    // 全局搜索（查找聊天记录）：keyword 关键字 + type 过滤（2 图片/3 文件/4 链接）
-    async search(keyword, { type, limit } = {}) {
-      return unwrap(await invoke('messages', 'search', keyword, { type, limit }), []) || []
+    // 消息搜索（查找聊天记录）：keyword 关键字 + type 过滤（2 图片/3 文件/4 链接）；
+    // convId 非空时仅搜当前会话；offset/limit 滚动分页
+    async search(keyword, { type, limit, convId, offset } = {}) {
+      return unwrap(await invoke('messages', 'search', keyword, { type, limit, convId, offset }), []) || []
     },
     // 删除某会话全部消息（退群清理）
     async removeByConv(convId) {

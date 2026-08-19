@@ -12,6 +12,7 @@ import (
 	"im/service/internal/social"
 	apperr "im/service/internal/pkg/err"
 	"im/service/internal/pkg/jwt"
+	"im/service/internal/pkg/log"
 	"im/service/internal/pkg/resp"
 	"im/service/internal/server/middleware"
 	"im/service/internal/store/mysql"
@@ -148,13 +149,16 @@ type healthHandler struct {
 }
 
 // Check 健康检查：校验 MySQL 与 Redis 连通性。
+// 审计 L3：错误详情仅写服务端日志，不回显给调用方（防连接串/内部地址泄露）。
 func (h *healthHandler) Check(c *gin.Context) {
 	if err := h.deps.MySQL.Ping(); err != nil {
-		resp.Fail(c, apperr.Unavailable("mysql: "+err.Error()))
+		log.L().Error("healthz: mysql ping failed", "error", err)
+		resp.Fail(c, apperr.Unavailable("服务暂时不可用"))
 		return
 	}
 	if err := h.deps.Redis.Ping(c.Request.Context()).Err(); err != nil {
-		resp.Fail(c, apperr.Unavailable("redis: "+err.Error()))
+		log.L().Error("healthz: redis ping failed", "error", err)
+		resp.Fail(c, apperr.Unavailable("服务暂时不可用"))
 		return
 	}
 	resp.OK(c, gin.H{"status": "ok"})

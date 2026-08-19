@@ -3,8 +3,10 @@
 package auth
 
 import (
+	crand "crypto/rand"
 	"errors"
-	"math/rand"
+	"math/big"
+	"regexp"
 	"time"
 
 	apperr "im/service/internal/pkg/err"
@@ -33,16 +35,24 @@ type Cache interface {
 
 // 限流参数（审计 P1：防密码爆破与批量注册）：
 //   - 登录：同一账号窗口内最多尝试 loginLimitMax 次，超限拒绝至窗口结束；登录成功清零。
+//   - 登录 IP 维度（审计 L5）：同一 IP 窗口内最多 loginIPLimitMax 次，防横向低速爆破多账号。
 //   - 注册：同一 IP 每天最多 registerLimitMax 次。
 const (
 	loginLimitMax       = 10
 	loginLimitWindow    = 15 * time.Minute
+	loginIPLimitMax     = 50
+	loginIPLimitWindow  = 15 * time.Minute
 	registerLimitMax    = 20
 	registerLimitWindow = 24 * time.Hour
 )
 
-func loginLimitKey(account string) string { return "auth:login:limit:" + account }
-func registerLimitKey(ip string) string   { return "auth:reg:limit:" + ip }
+func loginLimitKey(account string) string  { return "auth:login:limit:" + account }
+func loginIPLimitKey(ip string) string     { return "auth:login:limit:ip:" + ip }
+func registerLimitKey(ip string) string    { return "auth:reg:limit:" + ip }
+
+// 账号格式约束（审计 M5）：长度 4~64（与 users.account VARCHAR(64) 对齐，防超大账号入库），
+// 字符集白名单仅允许字母/数字/下划线/点/连字符/@（覆盖手机号、邮箱与自定义账号）。
+var accountRe = regexp.MustCompile(`^[A-Za-z0-9_@.\-]+$`)
 
 // Service 认证服务。
 type Service struct {
@@ -91,6 +101,12 @@ func (s *Service) Register(req *RegisterReq, ip string) (*LoginResult, error) {
 	}
 	if len([]rune(nickname)) < 2 || len([]rune(nickname)) > 20 {
 		return nil, apperr.BadRequest("昵称长度需在 2-20 个字符之间")
+	}
+	if n := len([]rune(account)); n < 4 || n > 64 {
+		return nil, apperr.BadRequest("账号长度需在 4-64 个字符之间")
+	}
+	if !accountRe.MatchString(account) {
+		return nil, apperr.BadRequest("账号仅支持字母、数字、下划线、点、@ 和连字符")
 	}
 	if len(req.Password) < 8 || !hasLetterAndDigit(req.Password) {
 		return nil, apperr.BadRequest("密码至少 8 位，且同时包含字母和数字")
@@ -166,6 +182,12 @@ func (s *Service) Login(req *LoginReq, ip string) (*LoginResult, error) {
 	if n, err := s.cache.IncrWithTTL(loginLimitKey(account), loginLimitWindow); err == nil && n > loginLimitMax {
 		return nil, apperr.TooManyRequests("登录尝试过于频繁，请 15 分钟后再试")
 	}
+	// IP 维度限流（审计 L5）：防单 IP 对大量账号各试几次的横向低速爆破；ip 缺失时跳过
+	if ip != "" {
+		if n, err := s.cache.IncrWithTTL(loginIPLimitKey(ip), loginIPLimitWindow); err == nil && n > loginIPLimitMax {
+			return nil, apperr.TooManyRequests("当前网络登录尝试过于频繁，请稍后再试")
+		}
+	}
 	u, err := s.store.GetUserByAccount(account)
 	if err != nil {
 		if errors.Is(err, mysql.ErrNotFound) {
@@ -184,7 +206,7 @@ func (s *Service) Login(req *LoginReq, ip string) (*LoginResult, error) {
 	if err := s.store.TouchLastSeen(u.UID, 1); err != nil {
 		log.L().Warn("touch last_seen failed", "uid", u.UID, "error", err)
 	}
-	// 登录成功：清零失败计数
+	// 登录成功：清零账号维度失败计数（IP 维度按窗口自然过期，避免 NAT 下多用户互相影响不做清零）
 	_ = s.cache.Del(loginLimitKey(account))
 	return s.issueTokens(u.UID)
 }
@@ -284,10 +306,15 @@ func (s *Service) Logout(req *LogoutReq) error {
 }
 
 // genUniqueUID 生成 10 位随机数字 UID（首位 1~9），冲突时重试。
+// 审计 L6：改用加密随机源（crypto/rand），避免 math/rand 可预测性。
 func (s *Service) genUniqueUID() (int64, error) {
 	for i := 0; i < 10; i++ {
 		// 1000000000 ~ 9999999999
-		uid := int64(rand.Intn(9000000000) + 1000000000)
+		n, err := crand.Int(crand.Reader, big.NewInt(9000000000))
+		if err != nil {
+			return 0, apperr.WrapInternal("生成 UID 失败", err)
+		}
+		uid := n.Int64() + 1000000000
 		exists, err := s.store.UIDExists(uid)
 		if err != nil {
 			return 0, apperr.WrapInternal("检查 UID 冲突失败", err)

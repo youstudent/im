@@ -3,8 +3,8 @@ package social
 
 import (
 	"encoding/json"
+	"math/rand"
 	"strings"
-	"time"
 
 	apperr "im/service/internal/pkg/err"
 	"im/service/internal/store/mysql"
@@ -149,11 +149,18 @@ func (s *Service) ListFriends(uid int64) ([]*FriendDTO, error) {
 	return list, nil
 }
 
+// friendReqMsgMaxRunes 好友申请验证消息长度上限（库列 VARCHAR(255)，业务层收紧到 100 字，
+// 与验证消息场景对齐，防超大字符串冲刷申请/通知表）。
+const friendReqMsgMaxRunes = 100
+
 // SendFriendRequest 发送好友申请（不重复申请，写通知给接收方）。
-// 拦截：不能加自己、对方已是好友、目标用户不存在。
+// 拦截：不能加自己、对方已是好友、目标用户不存在、验证消息超长。
 func (s *Service) SendFriendRequest(fromUID, toUID int64, message string) error {
 	if fromUID == toUID {
 		return apperr.BadRequest("不能添加自己为好友")
+	}
+	if len([]rune(strings.TrimSpace(message))) > friendReqMsgMaxRunes {
+		return apperr.BadRequest("验证消息过长（最多 100 字）")
 	}
 	// 目标用户必须存在，防止对任意 uid 创建申请/通知
 	if _, err := s.store.GetUserByUID(toUID); err != nil {
@@ -162,6 +169,14 @@ func (s *Service) SendFriendRequest(fromUID, toUID int64, message string) error 
 	// 已是好友直接拦截，不再创建申请
 	if ok, err := s.store.AreFriends(fromUID, toUID); err == nil && ok {
 		return apperr.BadRequest("对方已是你的好友，无需重复添加")
+	}
+	// 防重复申请（审计 P0）：已有待处理申请时拦截，防止反复刷通知骚扰对方
+	if pendings, err := s.store.ListFriendRequests(toUID); err == nil {
+		for _, r := range pendings {
+			if r.FromUID == fromUID {
+				return apperr.BadRequest("好友申请已发送，请等待对方处理")
+			}
+		}
 	}
 	id, err := s.store.CreateFriendRequest(&mysql.FriendRequest{
 		ID: s.genID(), FromUID: fromUID, ToUID: toUID, Message: message, Status: 0,
@@ -334,11 +349,12 @@ func (s *Service) CreateGroup(ownerUID int64, name string, memberUIDs []int64, a
 		return nil, apperr.WrapInternal("创建群失败", err)
 	}
 	_ = s.store.AddGroupMember(gUID, ownerUID, 0) // 群主
-	// 邀请成员
+	// 邀请成员（审计 P0：逐个校验目标用户存在、去重、受群人数上限约束，防对任意 uid 强拉入群骚扰）
+	memberUIDs = filterInvitees(memberUIDs, ownerUID, nil, s.store)
+	if len(memberUIDs) >= maxGroupMembers {
+		return nil, apperr.BadRequest("邀请人数超过群上限")
+	}
 	for _, m := range memberUIDs {
-		if m == ownerUID {
-			continue
-		}
 		_ = s.store.AddGroupMember(gUID, m, 2)
 		// 通知被邀请者
 		_ = s.store.CreateNotification(&mysql.Notification{
@@ -374,11 +390,14 @@ func (s *Service) InviteToGroup(operatorUID, gUID int64, memberUIDs []int64) err
 		return apperr.NotFound("群不存在")
 	}
 	convID := g.ConvID
+	// 审计 P0：过滤无效邀请目标（不存在/已在群/重复），并校验群人数上限
+	existing, _ := s.store.ListGroupMembers(gUID)
+	memberUIDs = filterInvitees(memberUIDs, operatorUID, existing, s.store)
+	if len(existing)+len(memberUIDs) > maxGroupMembers {
+		return apperr.BadRequest("群成员已达上限，无法继续邀请")
+	}
 	var invited []int64
 	for _, m := range memberUIDs {
-		if m == operatorUID {
-			continue
-		}
 		_ = s.store.AddGroupMember(gUID, m, 2)
 		invited = append(invited, m)
 		_ = s.store.CreateNotification(&mysql.Notification{
@@ -419,6 +438,35 @@ func (s *Service) inviteSysMsg(inviterUID int64, inviteeUIDs []int64, groupName 
 		return content, ""
 	}
 	return content, string(b)
+}
+
+// maxGroupMembers 单群成员上限（含群主）。
+const maxGroupMembers = 500
+
+// filterInvitees 过滤邀请名单（审计 P0）：去掉操作者自己、已在群成员、不存在的用户。
+// existing 为当前群成员列表（建群时传 nil）；人数上限由调用方校验。
+func filterInvitees(uids []int64, operatorUID int64, existing []int64, store Store) []int64 {
+	seen := make(map[int64]struct{}, len(existing)+len(uids))
+	seen[operatorUID] = struct{}{}
+	for _, u := range existing {
+		seen[u] = struct{}{}
+	}
+	out := make([]int64, 0, len(uids))
+	for _, m := range uids {
+		if m <= 0 {
+			continue
+		}
+		if _, dup := seen[m]; dup {
+			continue
+		}
+		// 目标用户必须存在，防止对任意 uid 强拉入群并刷邀请通知
+		if _, err := store.GetUserByUID(m); err != nil {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	return out
 }
 
 // excludeUID 从 uid 列表中排除指定 uid（建群时过滤群主自己）。
@@ -622,9 +670,9 @@ func randGUID() int64 {
 	return int64(genRand(1000000000, 9000000000))
 }
 
-// genRand 生成 [min, min+span) 的随机数（避免引入额外依赖）。
+// genRand 生成 [min, min+span) 的随机数（math/rand 全局源已自动播种，不可用纳秒取模预测）。
 func genRand(min, span int64) int64 {
-	return min + time.Now().UnixNano()%span
+	return min + rand.Int63n(span)
 }
 
 func ginMap(kv ...interface{}) map[string]interface{} {

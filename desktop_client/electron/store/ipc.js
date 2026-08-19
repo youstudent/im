@@ -54,7 +54,7 @@ function register() {
     messageRepo.listByConv(arg?.convId, { beforeSeq: arg?.beforeSeq, limit: arg?.limit })
   ))
   ipcMain.handle('store:messages:search', safe((arg) =>
-    messageRepo.search(arg?.keyword, { type: arg?.type, limit: arg?.limit })
+    messageRepo.search(arg?.keyword, { type: arg?.type, limit: arg?.limit, convId: arg?.convId })
   ))
   ipcMain.handle('store:messages:upsert', safe((arg) => messageRepo.upsertMany(arg?.msgs)))
   ipcMain.handle('store:messages:append-pending', safe((arg) => messageRepo.appendPending(arg?.msg)))
@@ -107,7 +107,10 @@ function register() {
   ipcMain.handle('store:file:open', safe(async (arg) => {
     const r = await filecache.openLocal({ url: arg?.url, key: arg?.key, name: arg?.name })
     if (!r.ok) throw new Error('文件未就绪（下载失败或地址无效）')
-    await shell.openPath(r.localPath)
+    // openPath 成功返回空串，失败返回错误原因（如系统无关联应用）；
+    // 不检查会把错误吞掉，渲染进程无法兜底（历史 bug：.webm 无关联时只弹系统错误框）
+    const err = await shell.openPath(r.localPath)
+    if (err) throw new Error('系统无法打开该文件：' + err)
     return r
   }))
 }

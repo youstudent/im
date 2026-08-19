@@ -78,6 +78,9 @@ func (s *Server) HandleWS(c *gin.Context) {
 	client := newClient(conn, s)
 	defer client.Close()
 
+	// 首帧 auth 读超时（审计 P1）：恶意连接建连后不发帧可永久挂死占资源，
+	// 10 秒内未完成鉴权即断开；鉴权成功后由 readLoop 接管读超时。
+	_ = conn.SetReadDeadline(time.Now().Add(authWait))
 	// 首帧必须为 auth，携带 access token
 	if !client.auth() {
 		return
@@ -94,6 +97,9 @@ func (s *Server) HandleWS(c *gin.Context) {
 	}
 	client.readLoop()
 }
+
+// authWait 首帧鉴权等待上限：建连后超过该时间未完成 auth 即断开（防 DoS 挂连接）。
+const authWait = 10 * time.Second
 
 // ---------- 客户端连接封装 ----------
 
@@ -170,6 +176,8 @@ func (cl *client) readLoop() {
 func (cl *client) handle(f *Frame) {
 	switch f.Type {
 	case FrameHeartbeat:
+		// 心跳续期在线状态（审计 P0）：presence 键 TTL 90s，不续期会在连接存活期间被误判离线
+		cl.srv.hub.TouchPresence(cl.uid)
 		cl.Send(1, mustJSON(NewFrame(FrameHeartbeat, f.Seq, gin.H{"pong": true})))
 	case FrameMsg:
 		cl.handleMsg(f)

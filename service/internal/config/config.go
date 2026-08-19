@@ -72,9 +72,10 @@ type Log struct {
 
 // Gateway WebSocket 网关配置。
 type Gateway struct {
-	HeartbeatInterval int `yaml:"heartbeat_interval"` // 秒
-	WriteWait         int `yaml:"write_wait"`         // 秒
-	PongWait          int `yaml:"pong_wait"`          // 秒
+	Node              string `yaml:"node"`               // 节点标识（跨节点路由定位），缺省用主机名
+	HeartbeatInterval int    `yaml:"heartbeat_interval"` // 秒
+	WriteWait         int    `yaml:"write_wait"`         // 秒
+	PongWait          int    `yaml:"pong_wait"`          // 秒
 }
 
 // Load 从指定路径加载配置，缺失关键字段时返回错误。

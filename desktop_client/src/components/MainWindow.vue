@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount, onActivated } from 'vue'
 import SearchChatHistoryModal from './SearchChatHistoryModal.vue'
 import { messageApi } from '../api/message'
 import { wsClient } from '../api/ws'
@@ -31,7 +31,7 @@ const message = ref('')
 const muteDnd = ref(true)
 
 // ---- "查找聊天记录"弹窗 ----
-// 通过 props.showSearchHistory 控制；点击结果项后通知父组件跳转
+// 通过 props.showSearchHistory 控制；点击结果项后通知父组件跳转；仅搜当前会话
 function openSearchHistory() {
   emit('update:showSearchHistory', true)
 }
@@ -387,6 +387,17 @@ const editingAnnouncement = ref(false)
 const announcementDraft = ref('')
 const savingGroupInfo = ref(false)
 
+// ===== 轻量顶部 toast（群设置保存成功/失败统一提示，替代原生 alert） =====
+const toastState = ref(null) // { text, type: success | error | info }
+let toastTimer = null
+function showToast(text, type = 'info') {
+  toastState.value = { text, type }
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    toastState.value = null
+  }, 3200)
+}
+
 function startEditGroupName() {
   groupNameDraft.value = currentContact.value.name || ''
   editingGroupName.value = true
@@ -404,12 +415,13 @@ async function saveGroupSettings() {
   const name = (editingGroupName.value ? groupNameDraft.value : c.name || '').trim()
   const announcement = (editingAnnouncement.value ? announcementDraft.value : groupInfo.value.announcement || '').trim()
   if (!name) {
-    alert('群名不能为空')
+    showToast('群名不能为空', 'error')
     return
   }
   savingGroupInfo.value = true
   try {
     await groupApi.update(c.targetId, name, announcement)
+    showToast('群设置已保存', 'success')
     editingGroupName.value = false
     editingAnnouncement.value = false
     c.name = name
@@ -418,7 +430,7 @@ async function saveGroupSettings() {
     const cached = groupMembersCache.get(c.targetId)
     if (cached) cached.info = info
   } catch (e) {
-    alert(e.message || '群设置保存失败')
+    showToast(e.message || '群设置保存失败', 'error')
   } finally {
     savingGroupInfo.value = false
   }
@@ -483,12 +495,13 @@ async function saveGroupSettingsModal() {
   const name = gsName.value.trim()
   const announcement = gsAnnouncement.value.trim()
   if (!name) {
-    alert('群名不能为空')
+    showToast('群名不能为空', 'error')
     return
   }
   gsSaving.value = true
   try {
     await groupApi.update(c.targetId, name, announcement)
+    showToast('群设置已保存', 'success')
     showGroupSettings.value = false
     // 本地即时生效：会话项名称、群资料缓存（与面板内联编辑同一套状态）
     c.name = name
@@ -497,7 +510,7 @@ async function saveGroupSettingsModal() {
     const cached = groupMembersCache.get(c.targetId)
     if (cached) cached.info = info
   } catch (e) {
-    alert(e.message || '群设置保存失败')
+    showToast(e.message || '群设置保存失败', 'error')
   } finally {
     gsSaving.value = false
   }
@@ -604,6 +617,7 @@ onBeforeUnmount(() => {
     if (el) el.removeEventListener('scroll', scrollHandler)
     scrollHandler = null
   }
+  stopVoice()
 })
 
 // ---- 查找聊天记录：跳转 + 高亮 ----
@@ -611,41 +625,84 @@ onBeforeUnmount(() => {
 const highlightMessageId = ref(null)
 let highlightTimer = null
 
-async function jumpToMessage({ conversationId, messageId, seq }) {
-  // 1) 切换会话
-  await switchConversation(conversationId)
-  // 2) 等会话切换与首次加载稳定（switchConversation 内部带过渡延时）
-  const start = Date.now()
-  while (Date.now() - start < 3000) {
-    if (activeId.value === conversationId && !chatLoading.value) break
-    await new Promise((r) => setTimeout(r, 50))
+// 目标消息翻页回补后仍未找到时的兜底：从服务端拉取以目标 seq 为中心的窗口
+// （目标及之前 40 条 + 之后尽量拉满 100 条）整体替换当前列表，落库并重置翻页游标。
+async function loadTargetWindow(contact, seqNum) {
+  if (!contact || !contact.convId) return false
+  const convIdStr = String(contact.convId)
+  try {
+    const before = (await messageApi.getHistory(contact.convId, { beforeSeq: seqNum + 1, limit: 40 })) || []
+    let after = []
+    try {
+      // 目标之后的新消息尽量拉满（上限 100）：多数会话可直接覆盖到最新，避免列表截断
+      after = (await messageApi.getHistory(contact.convId, { afterSeq: seqNum, limit: 100 })) || []
+    } catch {}
+    const msgs = before.concat(after).filter((m) => !isHiddenLeaveMsg(m))
+    if (!msgs.length) return false
+    // 网络数据落本地库（去重），后续翻页/搜索直接命中
+    if (!noPersistSet.value.has(convIdStr)) {
+      localdb.messages.upsert(msgs.map((m) => toDbMessage(m, convIdStr)))
+    }
+    const known = new Set()
+    contact.messages = msgs
+      .filter((m) => (known.has(String(m.id)) ? false : (known.add(String(m.id)), true)))
+      .map((m) => mapServerMessage(m, contact.convId))
+    contact.oldestSeq = contact.messages.find((m) => m.seq)?.seq || 0
+    contact._hasMore = Number(contact.oldestSeq) > 1 // 窗口之前可能还有更早历史
+    realConvMap.value[contact.id] = contact.convId
+    hydrateMediaCache(contact.messages, contact.convId)
+    return true
+  } catch {
+    return false
   }
-  // 3) 目标消息不在已加载范围（搜索命中的可能是很早的历史）：
-  // 逐页向上回补更早消息（本地库优先，无网络请求），直到包含目标
+}
+
+async function jumpToMessage({ conversationId, messageId, seq }) {
   const contact = conversations.value.find((c) => c.id === conversationId)
+  if (!contact) return
+  const seqNum = Number(seq) || 0
   const hasTarget = () =>
-    (contact && contact.messages || []).some((m) => String(m.id) === String(messageId))
-  if (contact && seq && !hasTarget()) {
-    for (let i = 0; i < 20; i++) {
+    (contact.messages || []).some((m) => String(m.id) === String(messageId))
+  // 1) 切会话：仅在不同会话时切换（同会话跳转会重载消息列表并把滚动重置到底部）；
+  // switchConversation 的 Promise 在历史加载完成后才 resolve，消除过早滚动竞态
+  if (activeId.value !== conversationId) {
+    await switchConversation(conversationId)
+  }
+  // 2) 目标不在已加载范围（搜索命中的可能是很早的历史）：逐页向上回补
+  // （本地库优先，无网络请求；打开搜索弹窗时已回填过全量历史，通常本地即可命中）
+  if (seqNum > 0 && !hasTarget()) {
+    for (let i = 0; i < 100; i++) {
       if (hasTarget()) break
       if (!contact._hasMore || !(Number(contact.oldestSeq) > 0)) break
-      if (Number(seq) >= Number(contact.oldestSeq)) break
+      if (seqNum >= Number(contact.oldestSeq)) break
       await loadConversationMessages(contact, { prepend: true })
     }
   }
+  // 3) 仍未找到（本地缺失/分页耗尽）：按目标 seq 拉取居中窗口替换列表
+  if (!hasTarget() && seqNum > 0) {
+    await loadTargetWindow(contact, seqNum)
+  }
   await nextTick()
-  // 4) 滚动并高亮目标消息
+  // 4) 即时居中定位（手动计算 scrollTop，比 scrollIntoView 平滑滚动稳定，
+  // 不会被图片异步加载撑高内容带偏）+ 临时高亮；媒体加载后再校正一次
+  const centerRow = () => {
+    const scroller = document.querySelector('.messages')
+    const row = document.querySelector(`.message-row[data-msg-id="${messageId}"]`)
+    if (!scroller || !row) return false
+    const top = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+    scroller.scrollTop = top - Math.max(0, (scroller.clientHeight - row.offsetHeight) / 2)
+    return true
+  }
   setTimeout(() => {
-    const target = document.querySelector(`.message-row[data-msg-id="${messageId}"]`)
-    if (target) {
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      highlightMessageId.value = messageId
-      if (highlightTimer) clearTimeout(highlightTimer)
-      highlightTimer = setTimeout(() => {
-        highlightMessageId.value = null
-      }, 2200)
-    }
-  }, 120)
+    if (!centerRow()) return
+    highlightMessageId.value = messageId
+    if (highlightTimer) clearTimeout(highlightTimer)
+    highlightTimer = setTimeout(() => {
+      highlightMessageId.value = null
+    }, 2200)
+    // 图片/缓存换源可能改变行高：延迟再校正一次，保证目标始终居中
+    setTimeout(centerRow, 300)
+  }, 80)
 }
 
 // ---- 切换会话 ----
@@ -702,8 +759,12 @@ async function openPlaceholderConversation(targetKey) {
   switchConversation(placeholder.id)
 }
 
-// 切换到指定会话，带淡出->加载->淡入过渡
+// 切换到指定会话，带淡出->加载->淡入过渡。
+// 返回的 Promise 在历史加载完成（开始淡入）后 resolve：供 jumpToMessage 等
+// 需要精确等待加载完成的调用方 await；历史 bug 是加载在 setTimeout 内执行，
+// await 不到导致跳转时过早滚动、列表重载后位置失效。
 async function switchConversation(id) {
+  stopVoice() // 切会话停止当前语音播放
   const target = conversations.value.find((c) => c.id === id)
   if (!target) return
 
@@ -714,39 +775,43 @@ async function switchConversation(id) {
   transitionState.value = 'leaving'
   await nextTick()
 
-  // 短暂延迟，让离开过渡可见
-  setTimeout(async () => {
-    // 2) 更新选中会话并清零未读（同步清零本地库，保持未读一致）
-    activeId.value = id
-    target.unread = 0
-    if (target.convId) localdb.conversations.setUnread(String(target.convId), 0)
+  await new Promise((resolve) => {
+    // 短暂延迟，让离开过渡可见
+    setTimeout(async () => {
+      // 2) 更新选中会话并清零未读（同步清零本地库，保持未读一致）
+      activeId.value = id
+      target.unread = 0
+      if (target.convId) localdb.conversations.setUnread(String(target.convId), 0)
 
-    // 3) 进入"加载中"状态
-    chatLoading.value = true
-    await nextTick()
+      // 3) 进入“加载中”状态
+      chatLoading.value = true
+      await nextTick()
 
-    // 4) 加载该会话历史：本地库秒开 + 条件同步（本地已追平服务端水位则免网络请求）
-    await loadConversationMessages(target)
+      // 4) 加载该会话历史：本地库秒开 + 条件同步（本地已追平服务端水位则免网络请求）
+      await loadConversationMessages(target)
 
-    // 5) 加载完成，淡入新消息
-    chatLoading.value = false
-    transitionState.value = 'entering'
-    await nextTick()
-    // 重置待确认已读标志（新会话）
-    pendingReadAck = false
-    // 首次加载默认滚动到底部（展示最新消息）
-    scrollToBottom()
-    // 打开会话即视为已读该会话全部消息：直接向对方发送已读回执（仅单聊）。
-    // 不能依赖 isNearBottom() 判定——scrollToBottom 内部用 nextTick 异步设置滚动位置，
-    // 此处同步调用 isNearBottom() 会读到切换前的残留 scrollTop，导致在消息较多时误判
-    // 为"不在底部"而漏发已读回执（对端因此收不到已读提示）。切换会话本身即查看最新消息。
-    sendReadReceipt(target)
-    // 群聊：从后端加载真实群成员
-    if (target.type === 'group') loadLiveGroupMembers()
-    setTimeout(() => {
-      transitionState.value = ''
-    }, 220)
-  }, 160)
+      // 5) 加载完成，淡入新消息
+      chatLoading.value = false
+      transitionState.value = 'entering'
+      await nextTick()
+      // 重置待确认已读标志（新会话）
+      pendingReadAck = false
+      // 首次加载默认滚动到底部（展示最新消息）
+      scrollToBottom()
+      // 打开会话即视为已读该会话全部消息：直接向对方发送已读回执（仅单聊）。
+      // 不能依赖 isNearBottom() 判定——scrollToBottom 内部用 nextTick 异步设置滚动位置，
+      // 此处同步调用 isNearBottom() 会读到切换前的残留 scrollTop，导致在消息较多时误判
+      // 为“不在底部”而漏发已读回执（对端因此收不到已读提示）。切换会话本身即查看最新消息。
+      sendReadReceipt(target)
+      // 群聊：从后端加载真实群成员
+      if (target.type === 'group') loadLiveGroupMembers()
+      setTimeout(() => {
+        transitionState.value = ''
+      }, 220)
+      // 通知等待方：历史已加载完成，可以安全定位/滚动
+      resolve()
+    }, 160)
+  })
 }
 
 // 加载指定会话的历史消息并填充到 target.messages（离线优先：本地库先渲染，网络拉取后合并落库）
@@ -796,7 +861,7 @@ async function loadConversationMessages(target, { prepend = false } = {}) {
       target.messages = localRows.map((r) => mapLocalMessage(r, target.convId))
       const last = target.messages[target.messages.length - 1]
       target.lastMessage = convLastPreview(last)
-      target.time = last.time
+      target.time = formatConvTime(last.createdAt || target.lastMsgTime)
       target.lastMsgTime = last.createdAt || target.lastMsgTime || 0
       target.oldestSeq = target.messages.find((m) => m.seq)?.seq || 0
       target._hasMore = localRows.length >= 10
@@ -892,7 +957,7 @@ async function loadConversationMessages(target, { prepend = false } = {}) {
       // 会话摘要用与后端一致的预览：图片/文件消息不显示原始 URL；
       // 最后一条若是撤回消息，显示"你/对方撤回了一条消息"（与撤回逻辑一致，避免被撤回原文出现在列表）
       target.lastMessage = convLastPreview(last)
-      target.time = last.time
+      target.time = formatConvTime(last.createdAt || target.lastMsgTime)
       // 优先用后端会话时间，消息时间为 0 时兜底保留
       target.lastMsgTime = last.createdAt || target.lastMsgTime || 0
       // 记录最旧消息 seq，用于下次向上翻页
@@ -1065,9 +1130,32 @@ function formatMsgTime(unixSec) {
   return `${hh}:${mm}`
 }
 
+// 会话列表时间展示：按微信风格（今天 HH:MM / 昨天 / 星期X / 同年内 M月D日 / 跨年 X年M月D日）
+function formatConvTime(unixSec) {
+  if (!unixSec) return ''
+  const d = new Date(unixSec * 1000)
+  const now = new Date()
+  if (sameDay(unixSec, Math.floor(now.getTime() / 1000))) {
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    return `${hh}:${mm}`
+  }
+  const yesterday = new Date(now.getTime() - 86400 * 1000)
+  if (d.getFullYear() === yesterday.getFullYear() && d.getMonth() === yesterday.getMonth() && d.getDate() === yesterday.getDate()) {
+    return '昨天'
+  }
+  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay())
+  if (d >= startOfWeek) return week
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
 // 会话列表摘要预览：图片/文件消息显示类型占位，文本截断。
 function messagePreview(m) {
   if (!m) return ''
+  // 音频后缀的文件消息（录音产物）按语音展示，与气泡渲染保持一致
+  if (isAudioMsg(m)) return '[语音]'
   // 非文本类型显示类型占位，与后端 convPreview 一致；避免会话列表展示资源 URL
   if (m.msgType && m.msgType !== MSG_TYPE.TEXT) return msgTypeLabel(m.msgType)
   const text = m.text || ''
@@ -1338,8 +1426,8 @@ function toConvItem(c, contactMap) {
     online: false,
     type: Number(c.type) === 2 ? 'group' : info.type || null,
     lastMessage: c.last_msg || '',
-    // 用最后消息时间格式化展示；无消息则留空
-    time: lastMsgTime ? formatMsgTime(lastMsgTime) : '',
+    // 用最后消息时间格式化展示（微信风格：今天时刻/昨天/星期/日期）；无消息则留空
+    time: formatConvTime(lastMsgTime),
     lastMsgTime, // 最后消息 unix 秒时间戳，用于会话排序
     unread: Number(c.unread) || 0,
     // uid/g_uid 为 10 位数字，Number 安全；本地库行 target_id 为文本，必须归一为数字，
@@ -1388,7 +1476,7 @@ function hydrateMediaCache(msgs, convId) {
   if (!localdb.available()) return
   if (convId && noPersistSet.value.has(String(convId))) return
   for (const m of msgs || []) {
-    const isMedia = m.msgType === MSG_TYPE.IMAGE || m.msgType === MSG_TYPE.FILE
+    const isMedia = m.msgType === MSG_TYPE.IMAGE || m.msgType === MSG_TYPE.FILE || m.msgType === MSG_TYPE.VOICE
     const url = m.extra && m.extra.url
     if (!isMedia || !url || m.extra.cacheUrl) continue
     localdb.fileCache.resolve(url, m.extra.key || '', m.extra.name || '').then((r) => {
@@ -1446,19 +1534,30 @@ function mapLocalMessage(r, convId) {
   )
 }
 
-// 发送文本消息
+// 发送文本消息：无暂存附件时仅发文本；有暂存时文本与附件一起发出
 async function send() {
   const value = message.value.trim()
-  if (!value) return
+  const staged = stagedFiles.value.slice()
+  if (!value && !staged.length) return
   closeEmojiPanel()
-  await sendMessage(MSG_TYPE.TEXT, value, null)
-  message.value = ''
-  autoResizeInput()
+  if (value) {
+    await sendMessage(MSG_TYPE.TEXT, value, null)
+    message.value = ''
+    autoResizeInput()
+  }
+  if (staged.length) {
+    // 先清空暂存区再逐个发送，防止异步期间重复提交
+    stagedFiles.value = []
+    for (const item of staged) sendStagedMedia(item)
+  }
 }
 
 // 统一发送消息（type: 文本/图片/文件）
 // extra 为元数据对象（图片/文件 URL、文件名等），会 JSON 序列化存入消息 extra 字段
-async function sendMessage(type, content, extra) {
+// options.prepared：自定义乐观消息字段（媒体暂存发送时注入本地预览/上传中状态）；
+// options.deferSend：媒体场景——content/extra 需等上传完成后才有真实值，
+// 此时只做乐观渲染与落库，返回带 __send 方法的 optimistic，由调用方上传成功后触发服务端发送
+async function sendMessage(type, content, extra, options = {}) {
   const contact = currentContact.value
   if (!contact) return
 
@@ -1488,10 +1587,12 @@ async function sendMessage(type, content, extra) {
       time: '刚刚',
       server: true,
       isPending: true, // 未同步标记：发送成功回填后置 false
+      ...(options.prepared || {}),
     }
-    // 乐观消息先落本地库（离线发送队列 sync_state=pending）；不落盘会话不入队
+    // 乐观消息先落本地库（离线发送队列 sync_state=pending）；不落盘会话不入队；
+    // deferSend 阶段 content/extra 尚为占位，本地库记录推迟到真实发送时写入（同步携带真实 URL）
     let localId = null
-    if (!noPersistSet.value.has(String(convId))) {
+    if (!options.deferSend && !noPersistSet.value.has(String(convId))) {
       localId = await localdb.messages.appendPending({
         conv_id: String(convId),
         sender_uid: String(meUid()),
@@ -1506,56 +1607,80 @@ async function sendMessage(type, content, extra) {
     contact.messages.push(optimistic)
     contact.lastMessage = previewText
     contact.lastMsgTime = optimistic.createdAt
-    contact.time = formatMsgTime(optimistic.createdAt)
+    contact.time = formatConvTime(optimistic.createdAt)
     scrollToBottom()
     reorderConversations()
 
-    // 发送超时守卫：30s 内未获确认（WS 回显或 HTTP 响应）展示为发送失败；
-    // 本地库保持 pending：迟到的服务端回显仍可 claimPending 去重，WS 重连后离线队列会自动重发
-    setTimeout(() => {
-      if (!optimistic.isPending) return
-      optimistic.readAt = '发送失败'
-      optimistic.isPending = false
-    }, SEND_TIMEOUT_MS)
-
-    try {
-      // WS 发送：返回是否真正发出（断线瞬间 sendFrame 会返回 false，不再静默丢帧）
-      let sent = false
-      if (wsClient.isConnected()) {
-        sent = wsClient.sendMessage(msgId, convId, targetId, convType, type, content, extraStr)
-      }
-      if (!sent) {
-        // WS 未连接或断线瞬间未发出：HTTP 兜底（修复审计 P0）
-        const dto = await messageApi.send({
+    // 服务端发送：WS 优先 + HTTP 兜底 + 回显替换 + 超时守卫；deferSend 时由调用方稍后触发
+    const __send = async ({ content: c2, extra: ex2 } = {}) => {
+      const sendContent = c2 ?? content
+      const sendExtraStr = ex2 ? JSON.stringify(ex2) : extraStr
+      if (c2 !== undefined) optimistic.text = c2
+      if (ex2) optimistic.extra = ex2
+      // 补写本地库 pending 记录（deferSend 首阶段未写入）
+      if (!optimistic.localId && !noPersistSet.value.has(String(convId))) {
+        optimistic.localId = await localdb.messages.appendPending({
           conv_id: String(convId),
-          target_id: Number(targetId),
-          conv_type: convType,
-          type: type,
-          msg_id: String(msgId),
-          content: content,
-          extra: extraStr,
+          sender_uid: String(meUid()),
+          sender_name: '',
+          type,
+          content: sendContent,
+          extra: sendExtraStr,
+          created_at: optimistic.createdAt,
         })
-        // 用服务端返回的真实消息替换乐观消息，并回填本地库同步状态
-        // 传服务端 conv_id（dto.conv_id）：保持与历史/WS 路径一致，避免头像匹配失败
-        const real = mapServerMessage(dto, dto.conv_id || convId)
-        optimistic.id = String(dto.id)
-        optimistic.time = real.time
-        optimistic.readAt = ''
-        optimistic.isPending = false
-        if (optimistic.localId) {
-          localdb.messages.setSyncState(optimistic.localId, 'synced', {
-            serverId: String(dto.id),
-            seq: Number(dto.seq) || 0,
-          })
-          optimistic.localId = null
-        }
       }
-    } catch (e) {
-      optimistic.readAt = '发送失败'
-      optimistic.isPending = false
-      // 发送失败：本地队列置 failed（重连后可重试）
-      if (optimistic.localId) localdb.messages.setSyncState(optimistic.localId, 'failed')
+      // 发送超时守卫：30s 内未获确认（WS 回显或 HTTP 响应）展示为发送失败；
+      // 本地库保持 pending：迟到的服务端回显仍可 claimPending 去重，WS 重连后离线队列会自动重发
+      setTimeout(() => {
+        if (!optimistic.isPending) return
+        optimistic.readAt = '发送失败'
+        optimistic.isPending = false
+      }, SEND_TIMEOUT_MS)
+      try {
+        // WS 发送：返回是否真正发出（断线瞬间 sendFrame 会返回 false，不再静默丢帧）
+        let sent = false
+        if (wsClient.isConnected()) {
+          sent = wsClient.sendMessage(msgId, convId, targetId, convType, type, sendContent, sendExtraStr)
+        }
+        if (!sent) {
+          // WS 未连接或断线瞬间未发出：HTTP 兜底（修复审计 P0）
+          const dto = await messageApi.send({
+            conv_id: String(convId),
+            target_id: Number(targetId),
+            conv_type: convType,
+            type: type,
+            msg_id: String(msgId),
+            content: sendContent,
+            extra: sendExtraStr,
+          })
+          // 用服务端返回的真实消息替换乐观消息，并回填本地库同步状态
+          // 传服务端 conv_id（dto.conv_id）：保持与历史/WS 路径一致，避免头像匹配失败
+          const real = mapServerMessage(dto, dto.conv_id || convId)
+          optimistic.id = String(dto.id)
+          optimistic.time = real.time
+          optimistic.readAt = ''
+          optimistic.isPending = false
+          if (optimistic.localId) {
+            localdb.messages.setSyncState(optimistic.localId, 'synced', {
+              serverId: String(dto.id),
+              seq: Number(dto.seq) || 0,
+            })
+            optimistic.localId = null
+          }
+        }
+      } catch (e) {
+        optimistic.readAt = '发送失败'
+        optimistic.isPending = false
+        // 发送失败：本地队列置 failed（重连后可重试）
+        if (optimistic.localId) localdb.messages.setSyncState(optimistic.localId, 'failed')
+      }
     }
+    // 媒体暂存场景：只先本地渲染，真实发送由调用方在上传完成后触发
+    if (options.deferSend) {
+      optimistic.__send = __send
+      return optimistic
+    }
+    await __send()
     return
   }
 
@@ -1576,34 +1701,199 @@ async function sendMessage(type, content, extra) {
   contact.lastMessage = previewText
 }
 
-// 发送图片：选图 → 预签名 → 上传 OSS → 发 type=2 消息
+// 选择图片：白名单/大小校验后暂存到输入区（点击发送才真正上传，参考微信）
+// accept 不用 image/*（包含 svg，属后端危险类型黑名单），改用与后端对齐的扩展名列表
 async function sendImage() {
-  const file = await pickFile('image/*')
+  const file = await pickFile(IMAGE_ACCEPT)
   if (!file) return
-  await sendMedia('image', file, MSG_TYPE.IMAGE)
+  stageFiles([file], { toastSkip: true })
 }
 
-// 发送文件：选文件 → 预签名 → 上传 OSS → 发 type=3 消息
+// 选择文件：白名单/大小校验后暂存到输入区（点击发送才真正上传）
 async function sendFile() {
-  const file = await pickFile()
+  const file = await pickFile(FILE_ACCEPT)
   if (!file) return
-  await sendMedia('file', file, MSG_TYPE.FILE)
+  stageFiles([file], { toastSkip: true })
 }
 
-// 统一的媒体消息发送流程
-async function sendMedia(kind, file, msgType) {
-  if (!currentContact.value) return
+// ===== 附件暂存区：图片/文件选择或拖入后先在输入框上方展示，点击发送才调真实上传接口 =====
+const stagedFiles = ref([]) // [{ id, file, kind, previewUrl, name, size }]
+
+// 暂存附件：统一校验白名单/大小（toastSkip：按钮选择单文件场景静默跳过非法项）
+function stageFiles(files, { toastSkip = false } = {}) {
+  let added = 0
+  for (const f of files || []) {
+    if (f.size > MAX_UPLOAD_SIZE) {
+      if (toastSkip) showToast('文件大小超限（上限 200MB）', 'error')
+      else showToast(`「${f.name}」大小超限（上限 200MB），已跳过`, 'error')
+      continue
+    }
+    let kind = ''
+    if (isAllowedImage(f.name)) kind = 'image'
+    else if (isAllowedFile(f.name)) kind = 'file'
+    if (!kind) {
+      if (toastSkip) showToast('不支持发送该类型文件，仅支持图片与文档/压缩包/音视频等常见格式', 'error')
+      else showToast(`不支持的文件类型：${f.name}`, 'error')
+      continue
+    }
+    stagedFiles.value.push({
+      id: `stg-${Date.now()}-${Math.floor(Math.random() * 1000)}-${added}`,
+      file: f,
+      kind,
+      previewUrl: kind === 'image' ? URL.createObjectURL(f) : '',
+      name: f.name,
+      size: f.size,
+    })
+    added++
+  }
+  if (!toastSkip && added > 1) showToast(`已添加 ${added} 个附件，点击发送发出`, 'info')
+}
+
+// 移除暂存附件（释放预览 ObjectURL）
+function removeStaged(id) {
+  const idx = stagedFiles.value.findIndex((s) => s.id === id)
+  if (idx < 0) return
+  const [item] = stagedFiles.value.splice(idx, 1)
+  if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
+}
+
+// ===== 语音录制：点击开始 / 再点结束，录音产物进附件暂存区（随发送一起上传，webm 在文件白名单内）=====
+const recording = ref(false)
+let mediaRecorder = null
+let recordChunks = []
+let recordStream = null
+
+async function toggleRecordVoice() {
+  // 录音中：再点一次结束
+  if (recording.value) {
+    recording.value = false
+    mediaRecorder?.stop()
+    return
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showToast('当前环境不支持录音', 'error')
+    return
+  }
+  // 麦克风检测：无任何音频输入设备 → 提示（不弹权限直接告知）
   try {
-    const { downloadUrl, objectKey } = await fileApi.uploadFile(file, kind)
-    await sendMessage(msgType, downloadUrl || '', {
-      url: downloadUrl,
-      key: objectKey, // OSS object_key，后端用于历史消息时重新生成有效的下载 URL
-      name: file.name,
-      size: file.size,
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    if (!devices.some((d) => d.kind === 'audioinput')) {
+      showToast('未检测到麦克风设备，请检查是否已连接麦克风', 'error')
+      return
+    }
+  } catch {}
+  // 申请麦克风权限：拒绝/无设备时 getUserMedia 会抛错
+  try {
+    recordStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  } catch (e) {
+    console.warn('[MainWindow] 麦克风访问失败:', e?.message || e)
+    showToast('无法访问麦克风，请检查系统权限或麦克风连接', 'error')
+    return
+  }
+  recordChunks = []
+  mediaRecorder = new MediaRecorder(recordStream)
+  mediaRecorder.ondataavailable = (e) => {
+    if (e.data && e.data.size) recordChunks.push(e.data)
+  }
+  mediaRecorder.onstop = () => {
+    recordStream?.getTracks().forEach((t) => t.stop())
+    recordStream = null
+    const mime = mediaRecorder?.mimeType || 'audio/webm'
+    const blob = new Blob(recordChunks, { type: mime })
+    recordChunks = []
+    if (!blob.size) {
+      showToast('录音时长过短，请重试', 'error')
+      return
+    }
+    const ext = mime.includes('mp4') || mime.includes('aac') ? 'm4a' : 'webm'
+    const d = new Date()
+    const pad = (n) => String(n).padStart(2, '0')
+    const name = `语音_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.${ext}`
+    stageFiles([new File([blob], name, { type: mime })], { toastSkip: true })
+    showToast('录音已加入暂存，点击发送发出', 'info')
+  }
+  mediaRecorder.start()
+  recording.value = true
+}
+
+// 暂存附件发送：本地立即展示预览 + 旋转加载态（微信风格）→ 后台上传 OSS → 成功后才真正发出；
+// 上传失败气泡置为发送失败；上传成功后的服务端发送/回显/超时守卫复用 sendMessage 既有机制
+async function sendStagedMedia(item) {
+  const contact = currentContact.value
+  if (!contact || !item) return
+  const isImage = item.kind === 'image'
+  const msgType = isImage ? MSG_TYPE.IMAGE : MSG_TYPE.FILE
+  // 上传中：本地预览直显 + 旋转 spinner；URL/名称等元数据随上传成功后的真实值发出
+  const prepared = {
+    isUploading: true,
+    extra: isImage
+      ? { url: item.previewUrl, cacheUrl: item.previewUrl, name: item.name, size: item.size }
+      : { name: item.name, size: item.size },
+    time: formatMsgTime(Math.floor(Date.now() / 1000)),
+  }
+  const sendP = sendMessage(msgType, '', null, { prepared, deferSend: true })
+  // 释放暂存预览地址：乐观消息 extra 已持有同一 blob URL，重复 revoke 会导致预览失效
+  item.previewUrl = ''
+  try {
+    const { downloadUrl, objectKey } = await fileApi.uploadFile(item.file, item.kind)
+    const optimistic = await sendP
+    if (optimistic) optimistic.isUploading = false
+    // 上传成功：带真实 URL 走服务端发送（WS/HTTP 兜底与回显替换由 sendMessage 接管）
+    await optimistic?.__send?.({
+      content: downloadUrl || '',
+      extra: { url: downloadUrl, key: objectKey, name: item.name, size: item.size },
     })
   } catch (e) {
-    console.warn('[MainWindow] 发送' + (kind === 'image' ? '图片' : '文件') + '失败:', e?.message || e)
+    console.warn('[MainWindow] 上传失败:', e?.message || e)
+    const optimistic = await sendP
+    if (optimistic && optimistic.isPending) {
+      optimistic.isUploading = false
+      optimistic.readAt = '发送失败'
+      optimistic.isPending = false
+      if (optimistic.localId) localdb.messages.setSyncState(optimistic.localId, 'failed')
+    }
+    showToast('上传失败，请稍后重试', 'error')
   }
+}
+
+// ===== 拖拽上传：拖动图片/文件到聊天区释放即发送（复用白名单/大小校验）=====
+const dragging = ref(false)
+let dragDepth = 0
+
+// 窗口级拖拽拦截：防止拖文件到非聊天区时 Electron 默认导航到 file:// 白屏
+function preventWindowDrag(e) {
+  if ((e.dataTransfer?.types || []).includes('Files')) {
+    e.preventDefault()
+  }
+}
+
+function onChatDragEnter(e) {
+  if (!(e.dataTransfer?.types || []).includes('Files')) return
+  e.preventDefault()
+  dragDepth++
+  dragging.value = hasActiveContact.value
+}
+
+function onChatDragOver(e) {
+  if (!(e.dataTransfer?.types || []).includes('Files')) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = hasActiveContact.value ? 'copy' : 'none'
+}
+
+function onChatDragLeave() {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (!dragDepth) dragging.value = false
+}
+
+// 释放：拖入的文件先进暂存区（输入框上方预览），点击发送才真正上传；白名单/大小校验由 stageFiles 统一处理
+function onChatDrop(e) {
+  e.preventDefault()
+  dragDepth = 0
+  dragging.value = false
+  if (!hasActiveContact.value) return
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (!files.length) return
+  stageFiles(files)
 }
 
 // 文件选择（返回 File 或 null）
@@ -1619,6 +1909,46 @@ function pickFile(accept) {
     input.click()
   })
 }
+
+// ===== 发送文件类型白名单：仅允许文档/表格/演示/压缩包/文本/音视频，禁止可执行与脚本类文件；
+// 图片不在此列（走独立的"发送图片"按钮）。accept 仅辅助筛选，系统选择器可绕过，须校验兜底 =====
+const FILE_EXT_WHITELIST = new Set([
+  // 办公文档
+  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pdf',
+  'wps', 'et', 'dps', 'ofd', 'csv',
+  // 文本/代码
+  'txt', 'md', 'json', 'xml', 'log',
+  // 压缩包
+  'zip', 'rar', '7z', 'tar', 'gz',
+  // 视频
+  'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', 'webm', '3gp',
+  // 音频
+  'mp3', 'wav', 'aac', 'flac', 'm4a', 'ogg', 'wma',
+])
+
+function isAllowedFile(name) {
+  const ext = String(name || '').toLowerCase().split('.').pop()
+  return !!ext && FILE_EXT_WHITELIST.has(ext)
+}
+
+// 文件选择器的 accept 筛选（与白名单一致）
+const FILE_ACCEPT = [...FILE_EXT_WHITELIST].map((e) => '.' + e).join(',')
+
+// ===== 图片白名单：与后端 file 服务 imageExtWhitelist 对齐；
+// 不用 image/*（它包含 svg，svg 在后端属危险类型黑名单会被拒绝） =====
+const IMAGE_EXT_WHITELIST = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'heic', 'heif', 'tiff', 'ico',
+])
+
+function isAllowedImage(name) {
+  const ext = String(name || '').toLowerCase().split('.').pop()
+  return !!ext && IMAGE_EXT_WHITELIST.has(ext)
+}
+
+const IMAGE_ACCEPT = [...IMAGE_EXT_WHITELIST].map((e) => '.' + e).join(',')
+
+// 单文件上传上限 200MB（与后端 maxUserUploadSize 对齐）
+const MAX_UPLOAD_SIZE = 200 * 1024 * 1024
 
 // ===== 表情面板 =====
 const showEmojiPanel = ref(false)
@@ -1684,8 +2014,21 @@ function onImageLoaded(msg) {
   }
 }
 
-function openImage(msg) {
-  imagePreview.value = { url: msg.extra?.cacheUrl || msg.extra?.url, name: msg.extra?.name || '图片' }
+// 点击图片：优先调用系统图片查看器打开（Electron：本地缓存落盘后 shell.openPath）；
+// 浏览器调试环境、不落盘会话或系统打开失败时，降级为应用内大图预览
+async function openImage(msg) {
+  const url = msg?.extra?.url
+  const contact = currentContact.value
+  const convIdStr = String(realConvMap.value[contact?.id] || contact?.convId || '')
+  // 不落盘会话：系统打开需先下载落盘缓存，违背敏感会话不落地约定，直接应用内预览
+  const noPersist = !!convIdStr && noPersistSet.value.has(convIdStr)
+  if (url && localdb.available() && !noPersist) {
+    try {
+      const r = await localdb.fileCache.open(url, msg.extra?.key || '', msg.extra?.name || '')
+      if (r && r.ok) return
+    } catch {}
+  }
+  imagePreview.value = { url: msg.extra?.cacheUrl || url, name: msg.extra?.name || '图片' }
 }
 
 function closeImagePreview() {
@@ -1700,7 +2043,11 @@ async function openFile(msg) {
     try {
       const r = await localdb.fileCache.open(url, msg.extra?.key || '', msg.extra?.name || '')
       if (r && r.ok) return
-    } catch {}
+    } catch (e) {
+      // 系统无关联应用（如 .webm）时 shell.openPath 报错：提示后走下方下载兜底
+      console.warn('[MainWindow] 系统打开文件失败:', e?.message || e)
+      showToast(e?.message || '系统无法打开该文件', 'error')
+    }
   }
   // 兜底：触发浏览器/系统下载
   const a = document.createElement('a')
@@ -1711,6 +2058,105 @@ async function openFile(msg) {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+}
+
+// ===== 语音应用内播放 =====
+// 录音产物以 FILE(type=3) 消息发出（webm/m4a 等音频后缀），此前点击走 shell.openPath，
+// Windows 无 .webm 关联应用会弹系统错误框；现改为气泡内 <audio> 直接播放。
+// 全局单 Audio 实例：切播新语音自动停旧；切会话/卸载时停止。
+const AUDIO_EXT_RE = /\.(webm|m4a|aac|mp3|wav|ogg|flac)$/i
+const voiceState = reactive({ id: null, playing: false, duration: 0 })
+let voiceAudio = null
+
+// 语音消息识别：type=4 原生语音，或以音频后缀发送的 FILE 消息（兼容存量录音）
+function isAudioMsg(m) {
+  if (!m) return false
+  const t = Number(m.msgType)
+  if (t === MSG_TYPE.VOICE) return true
+  return t === MSG_TYPE.FILE && AUDIO_EXT_RE.test(String(m.extra?.name || ''))
+}
+
+function voiceSrc(m) {
+  return m.extra?.cacheUrl || m.extra?.url || ''
+}
+
+function isPlayingVoice(m) {
+  return voiceState.id === m.id && voiceState.playing
+}
+
+// 时长展示：元数据加载后显示秒数（未知时不展示）
+function voiceDurationLabel(m) {
+  if (voiceState.id === m.id && voiceState.duration > 0 && Number.isFinite(voiceState.duration)) {
+    return Math.round(voiceState.duration) + '″'
+  }
+  return ''
+}
+
+function stopVoice() {
+  if (voiceAudio) {
+    voiceAudio.src = ''
+    voiceAudio = null
+  }
+  voiceState.id = null
+  voiceState.playing = false
+  voiceState.duration = 0
+}
+
+function togglePlayVoice(m) {
+  const src = voiceSrc(m)
+  if (!src) {
+    showToast('语音地址无效，无法播放', 'error')
+    return
+  }
+  // 同一条：播放/暂停切换
+  if (voiceState.id === m.id && voiceAudio) {
+    if (voiceAudio.paused) {
+      voiceAudio.play().catch(() => showToast('语音播放失败', 'error'))
+    } else {
+      voiceAudio.pause()
+    }
+    return
+  }
+  // 切播：停旧建新
+  stopVoice()
+  const audio = new Audio(src)
+  voiceAudio = audio
+  voiceState.id = m.id
+  audio.addEventListener('loadedmetadata', () => {
+    if (voiceState.id === m.id) voiceState.duration = audio.duration || 0
+  })
+  audio.addEventListener('play', () => {
+    if (voiceState.id === m.id) voiceState.playing = true
+  })
+  audio.addEventListener('pause', () => {
+    if (voiceState.id === m.id) voiceState.playing = false
+  })
+  audio.addEventListener('ended', () => {
+    if (voiceState.id === m.id) {
+      voiceState.playing = false
+      voiceState.id = null
+    }
+  })
+  audio.addEventListener('error', async () => {
+    if (voiceState.id !== m.id) return // 已被切播/停止，忽略
+    // 兜底重试：预签名 URL 过期时先下载入缓存，换本地地址重播一次
+    if (localdb.available() && m.extra?.url && !m.extra?.cacheUrl) {
+      let r = null
+      try {
+        r = await localdb.fileCache.resolve(m.extra.url, m.extra.key || '', m.extra.name || '')
+      } catch {}
+      if (r && r.hit && r.cacheUrl && voiceState.id === m.id) {
+        m.extra.cacheUrl = r.cacheUrl
+        audio.src = r.cacheUrl
+        audio.play().catch(() => showToast('语音播放失败', 'error'))
+        return
+      }
+    }
+    showToast('语音播放失败', 'error')
+    voiceState.id = null
+    voiceState.playing = false
+  })
+  audio.play().catch(() => showToast('语音播放失败', 'error'))
 }
 
 // 格式化文件大小
@@ -1802,17 +2248,54 @@ function onMessagesScroll() {
 
 // ===== 微信风格：输入框自适应高度（最多约 6 行）=====
 const inputFieldEl = ref(null)
+const inputBoxEl = ref(null)
 const MAX_INPUT_ROWS = 6
+
+// ===== 输入框高度自由拖动：上限总高度，下限保持两行底高 =====
+const inputBoxHeight = ref(0) // 用户拖动后的固定高度（0 = 未拖动，走内容自适应）
+const INPUT_BOX_PADDING_Y = 24 // .input-box 上下内边距之和（12px * 2）
+const MIN_INPUT_BOX_HEIGHT = 68 // 两行 + 内边距
+const MAX_INPUT_BOX_HEIGHT = 280 // 拖动总高度上限
 
 function autoResizeInput() {
   const el = inputFieldEl.value
   if (!el) return
+  // 已拖动过：固定为用户设定的高度，内容超出时内部滚动
+  if (inputBoxHeight.value) {
+    el.style.height = Math.max(22, inputBoxHeight.value - INPUT_BOX_PADDING_Y) + 'px'
+    el.style.overflowY = 'auto'
+    return
+  }
   el.style.height = 'auto'
   // 通过行高推算最大高度：约 6 行文本
   const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 22
   const maxHeight = lineHeight * MAX_INPUT_ROWS
   el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px'
   el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
+}
+
+// 按住手柄上下拖动调整输入框高度（向上拖变高），实时夹在上下限内
+function startInputResize(e) {
+  e.preventDefault()
+  const box = inputBoxEl.value
+  if (!box) return
+  const startY = e.clientY
+  const startH = box.offsetHeight
+  const onMove = (ev) => {
+    const h = Math.min(MAX_INPUT_BOX_HEIGHT, Math.max(MIN_INPUT_BOX_HEIGHT, startH + (startY - ev.clientY)))
+    inputBoxHeight.value = h
+    autoResizeInput()
+  }
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+  }
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'row-resize'
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
 }
 
 // 不落盘（敏感）会话集合：从本地库读取并在开关切换时维护；
@@ -1890,7 +2373,7 @@ async function onWsMessage(msg) {
 
   // 统一更新会话列表元信息（最后消息 + 时间），确保发送/接收后都刷新
   contact.lastMessage = messagePreview(mapped)
-  contact.time = mapped.time
+  contact.time = formatConvTime(mapped.createdAt)
   contact.lastMsgTime = mapped.createdAt || Math.floor(Date.now() / 1000)
 
   // 消息去重：同一条消息（全局 id，非 tmp 乐观消息）已存在时不重复追加，
@@ -2160,7 +2643,7 @@ function refreshConvPreview(cid) {
   const lastMsg = [...contact.messages].reverse().find((m) => m.isPending !== true)
   if (!lastMsg) return
   contact.lastMessage = convLastPreview(lastMsg)
-  contact.time = lastMsg.time
+  contact.time = formatConvTime(lastMsg.createdAt)
   contact.lastMsgTime = lastMsg.createdAt || Math.floor(Date.now() / 1000)
   reorderConversations()
 }
@@ -2323,7 +2806,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="window">
+  <div class="window" @dragover.prevent="preventWindowDrag" @drop.prevent="preventWindowDrag">
     <!-- 主体区 -->
     <main class="body">
       <!-- 会话列表 -->
@@ -2409,8 +2892,14 @@ onBeforeUnmount(() => {
 
       <div class="divider-col"></div>
 
-      <!-- 聊天区 -->
-      <section class="chat">
+      <!-- 聊天区：支持拖拽图片/文件到此处释放上传 -->
+      <section
+        class="chat"
+        @dragenter="onChatDragEnter"
+        @dragover="onChatDragOver"
+        @dragleave="onChatDragLeave"
+        @drop="onChatDrop"
+      >
         <!-- 聊天头部 -->
         <header class="chat-header">
           <div class="chat-header-left">
@@ -2514,12 +3003,34 @@ onBeforeUnmount(() => {
                     <div class="in-col">
                       <!-- 群聊：对方消息上方显示发送者昵称 -->
                       <div v-if="isGroupChat && meta.msg.senderName" class="sender-name">{{ meta.msg.senderName }}</div>
-                      <div class="bubble in" @click="openMsgMenu($event, meta.msg)">
+                      <div class="bubble in" :class="{ 'bubble-media': (meta.msg.msgType === 2 || meta.msg.msgType === 3) && !isAudioMsg(meta.msg) }" @click="openMsgMenu($event, meta.msg)">
                         <!-- 文本消息 -->
                         <template v-if="meta.msg.msgType === 1 || !meta.msg.msgType">{{ meta.msg.text }}</template>
                         <!-- 图片消息 -->
                         <template v-else-if="meta.msg.msgType === 2">
-                        <img class="msg-image" :src="meta.msg.extra.cacheUrl || meta.msg.extra.url" alt="图片" @load="onImageLoaded(meta.msg)" @click.stop="openImage(meta.msg)" />
+                        <!-- 图片本体 + 上传中旋转遮罩（微信风格，仅未发送完成时显示） -->
+                        <div class="msg-image-wrap">
+                          <img class="msg-image" :src="meta.msg.extra.cacheUrl || meta.msg.extra.url" alt="图片" @load="onImageLoaded(meta.msg)" @click.stop="openImage(meta.msg)" />
+                          <div v-if="meta.msg.isUploading" class="media-pending-mask">
+                            <span class="spinner media-spinner"></span>
+                          </div>
+                        </div>
+                      </template>
+                      <!-- 语音消息：气泡内直接播放（录音产物以 FILE 类型发送，按音频后缀识别） -->
+                      <template v-else-if="isAudioMsg(meta.msg)">
+                        <div
+                          class="msg-voice"
+                          role="button"
+                          :aria-label="isPlayingVoice(meta.msg) ? '暂停语音' : '播放语音'"
+                          :title="isPlayingVoice(meta.msg) ? '点击暂停' : '点击播放'"
+                          @click.stop="togglePlayVoice(meta.msg)"
+                        >
+                          <span class="voice-bars" :class="{ playing: isPlayingVoice(meta.msg) }" aria-hidden="true">
+                            <i></i><i></i><i></i>
+                          </span>
+                          <span class="voice-dur">{{ voiceDurationLabel(meta.msg) }}</span>
+                          <span v-if="meta.msg.isUploading" class="spinner media-spinner voice-spinner"></span>
+                        </div>
                       </template>
                       <!-- 文件消息 -->
                       <template v-else-if="meta.msg.msgType === 3">
@@ -2534,6 +3045,8 @@ onBeforeUnmount(() => {
                             <span class="file-name">{{ meta.msg.extra.name || '文件' }}</span>
                             <span class="file-size">{{ formatFileSize(meta.msg.extra.size) }}</span>
                           </div>
+                          <!-- 上传中旋转态 -->
+                          <span v-if="meta.msg.isUploading" class="spinner media-spinner file-spinner"></span>
                         </div>
                       </template>
                       </div>
@@ -2541,12 +3054,34 @@ onBeforeUnmount(() => {
                   </template>
                   <template v-else>
                     <div class="out-col">
-                      <div class="bubble out" @click="openMsgMenu($event, meta.msg)">
+                      <div class="bubble out" :class="{ 'bubble-media': (meta.msg.msgType === 2 || meta.msg.msgType === 3) && !isAudioMsg(meta.msg) }" @click="openMsgMenu($event, meta.msg)">
                         <!-- 文本消息 -->
                         <template v-if="meta.msg.msgType === 1 || !meta.msg.msgType">{{ meta.msg.text }}</template>
                         <!-- 图片消息 -->
                         <template v-else-if="meta.msg.msgType === 2">
-                          <img class="msg-image" :src="meta.msg.extra.cacheUrl || meta.msg.extra.url" alt="图片" @load="onImageLoaded(meta.msg)" @click.stop="openImage(meta.msg)" />
+                          <!-- 图片本体 + 上传中旋转遮罩（微信风格，仅未发送完成时显示） -->
+                          <div class="msg-image-wrap">
+                            <img class="msg-image" :src="meta.msg.extra.cacheUrl || meta.msg.extra.url" alt="图片" @load="onImageLoaded(meta.msg)" @click.stop="openImage(meta.msg)" />
+                            <div v-if="meta.msg.isUploading" class="media-pending-mask">
+                              <span class="spinner media-spinner"></span>
+                            </div>
+                          </div>
+                        </template>
+                        <!-- 语音消息：气泡内直接播放（录音产物以 FILE 类型发送，按音频后缀识别） -->
+                        <template v-else-if="isAudioMsg(meta.msg)">
+                          <div
+                            class="msg-voice"
+                            role="button"
+                            :aria-label="isPlayingVoice(meta.msg) ? '暂停语音' : '播放语音'"
+                            :title="isPlayingVoice(meta.msg) ? '点击暂停' : '点击播放'"
+                            @click.stop="togglePlayVoice(meta.msg)"
+                          >
+                            <span class="voice-bars" :class="{ playing: isPlayingVoice(meta.msg) }" aria-hidden="true">
+                              <i></i><i></i><i></i>
+                            </span>
+                            <span class="voice-dur">{{ voiceDurationLabel(meta.msg) }}</span>
+                            <span v-if="meta.msg.isUploading" class="spinner media-spinner voice-spinner"></span>
+                          </div>
                         </template>
                         <!-- 文件消息 -->
                         <template v-else-if="meta.msg.msgType === 3">
@@ -2561,6 +3096,8 @@ onBeforeUnmount(() => {
                               <span class="file-name">{{ meta.msg.extra.name || '文件' }}</span>
                               <span class="file-size">{{ formatFileSize(meta.msg.extra.size) }}</span>
                             </div>
+                            <!-- 上传中旋转态 -->
+                            <span v-if="meta.msg.isUploading" class="spinner media-spinner file-spinner"></span>
                           </div>
                         </template>
                       </div>
@@ -2654,30 +3191,26 @@ onBeforeUnmount(() => {
                 <path d="M3.33 14.17l4-3.5 3 2.5 3-2 4.34 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
               </svg>
             </button>
-            <button class="tool-btn" aria-label="文件" @click="sendFile">
+            <!-- 文件按钮：回形针（附件）图标，大小/线宽/hover 效果与工具栏其他按钮完全一致 -->
+            <button class="tool-btn" aria-label="发送文件" title="发送文件" @click="sendFile">
               <svg viewBox="0 0 20 20" width="20" height="20">
-                <path d="M5 2.5h6l4 4v11H5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-                <path d="M11.67 2.5v3.33H15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                <path
+                  d="M17.87 9.21l-7.66 7.66a5 5 0 0 1-7.07-7.07l7.66-7.66a3.33 3.33 0 0 1 4.72 4.72l-7.67 7.66a1.67 1.67 0 0 1-2.36-2.36l7.07-7.07"
+                  fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                />
               </svg>
             </button>
-            <button class="tool-btn" aria-label="截图">
-              <svg viewBox="0 0 20 20" width="20" height="20">
-                <path d="M2.5 7.5h15v8.33H2.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-                <circle cx="10" cy="10.83" r="2.92" fill="none" stroke="currentColor" stroke-width="1.5" />
-                <path d="M7.5 5l1-1.67h3l1 1.67" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button class="tool-btn" aria-label="语音">
+            <!-- 语音按钮：点击开始录音、再点结束并进附件暂存区；无麦克风时 toast 提示 -->
+            <button
+              class="tool-btn"
+              :class="{ recording: recording }"
+              :aria-label="recording ? '结束录音' : '开始录音'"
+              :title="recording ? '再点击一次结束录音' : '点击开始录音'"
+              @click="toggleRecordVoice"
+            >
               <svg viewBox="0 0 20 20" width="20" height="20">
                 <rect x="7.5" y="2.5" width="5" height="9.17" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5" />
                 <path d="M4.17 9.17a5.83 5.83 0 0 0 11.66 0M10 15v2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-              </svg>
-            </button>
-            <button class="tool-btn" aria-label="提及">
-              <svg viewBox="0 0 20 20" width="20" height="20">
-                <circle cx="10" cy="10" r="5.33" fill="none" stroke="currentColor" stroke-width="1.5" />
-                <path d="M5.83 7.5c1-2 2.5-3 4.17-3 2.5 0 4.17 1.67 4.17 4.17" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                <path d="M2.91 2.16c2-1.5 8-2 10 1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
               </svg>
             </button>
           </div>
@@ -2696,13 +3229,42 @@ onBeforeUnmount(() => {
             </div>
           </transition>
 
-          <div class="input-box">
+          <!-- 暂存附件区：选择/拖入的图片与文件先在此预览，点击发送才真实上传；× 可移除 -->
+          <div v-if="stagedFiles.length" class="staged-files">
+            <div v-for="s in stagedFiles" :key="s.id" class="staged-item" :title="s.name">
+              <template v-if="s.kind === 'image'">
+                <img class="staged-thumb" :src="s.previewUrl" alt="图片预览" />
+              </template>
+              <template v-else>
+                <div class="staged-file-card">
+                  <svg viewBox="0 0 20 20" width="20" height="20">
+                    <path d="M5 2.5h6l4 4v11H5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                    <path d="M11.67 2.5v3.33H15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+                  </svg>
+                  <span class="staged-file-name">{{ s.name }}</span>
+                  <span class="staged-file-size">{{ formatFileSize(s.size) }}</span>
+                </div>
+              </template>
+              <button class="staged-remove" aria-label="移除附件" @click="removeStaged(s.id)">
+                <svg viewBox="0 0 12 12" width="10" height="10">
+                  <path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 输入框拖动手柄：上下拖动调整高度（上限 280px） -->
+          <div class="input-resize-handle" title="拖动调整输入框高度" @mousedown="startInputResize">
+            <span class="handle-bar"></span>
+          </div>
+
+          <div ref="inputBoxEl" class="input-box" :style="inputBoxHeight ? { height: inputBoxHeight + 'px' } : null">
             <textarea
               ref="inputFieldEl"
               v-model="message"
               class="input-field"
               placeholder="输入消息…"
-              rows="1"
+              rows="2"
               @input="autoResizeInput"
               @keydown.enter.exact.prevent="send"
             ></textarea>
@@ -2717,7 +3279,7 @@ onBeforeUnmount(() => {
               <span>消息已端到端加密，并保存在本地</span>
             </div>
             <span class="shortcut">Enter 发送 · Shift+Enter 换行</span>
-            <button class="send-btn" :disabled="!message.trim()" @click="send">
+            <button class="send-btn" :disabled="!message.trim() && !stagedFiles.length" @click="send">
               <svg viewBox="0 0 16 16" width="16" height="16">
                 <path d="M2 8l12-6-4 14-3-6-5-2z" fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" />
               </svg>
@@ -2725,6 +3287,17 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </footer>
+        <!-- 拖拽上传提示遮罩：仅当文件被拖入聊天区时显示，不拦截 drop 事件 -->
+        <div v-if="dragging" class="drop-overlay" aria-hidden="true">
+          <div class="drop-card">
+            <svg viewBox="0 0 40 40" width="40" height="40">
+              <path d="M20 26V10m0 0l-6 6m6-6l6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+              <path d="M8 26v4a2 2 0 0 0 2 2h20a2 2 0 0 0 2-2v-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+            </svg>
+            <p class="drop-title">释放以发送</p>
+            <p class="drop-sub">支持图片与常见文件格式</p>
+          </div>
+        </div>
       </section>
 
       <!-- 联系人信息面板：类名切换驱动 CSS 过渡，实现淡入淡出 + 滑入滑出 -->
@@ -2783,13 +3356,13 @@ onBeforeUnmount(() => {
             </div>
             <div class="info-row clickable" @click="openSearchHistory">
               <div class="info-left">
-                <svg viewBox="0 0 16 16" width="16" height="16">
+                <svg viewBox="0 0 16 16" width="16" height="16" class="row-ico">
                   <circle cx="6.67" cy="6.67" r="4.67" fill="none" stroke="currentColor" stroke-width="1.3" />
                   <line x1="10.67" y1="10.67" x2="13.33" y2="13.33" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
                 </svg>
                 <span>查找聊天记录</span>
               </div>
-              <svg viewBox="0 0 16 16" width="16" height="16" class="chevron">
+              <svg viewBox="0 0 16 16" width="16" height="16" class="chevron row-ico">
                 <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </div>
@@ -2864,6 +3437,22 @@ onBeforeUnmount(() => {
               <button class="btn-outline" @click="openGroupSettings">
                 <span>群设置</span>
               </button>
+            </div>
+
+            <div class="divider-line"></div>
+
+            <!-- 群聊同样支持查找聊天记录：行结构/样式与单聊完全一致（限定当前会话，默认展示全部） -->
+            <div class="info-row clickable" @click="openSearchHistory">
+              <div class="info-left">
+                <svg viewBox="0 0 16 16" width="16" height="16" class="row-ico">
+                  <circle cx="6.67" cy="6.67" r="4.67" fill="none" stroke="currentColor" stroke-width="1.3" />
+                  <line x1="10.67" y1="10.67" x2="13.33" y2="13.33" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                </svg>
+                <span>查找聊天记录</span>
+              </div>
+              <svg viewBox="0 0 16 16" width="16" height="16" class="chevron row-ico">
+                <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
             </div>
 
             <div class="divider-line"></div>
@@ -3125,13 +3714,22 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- 查找聊天记录弹窗：通过父组件传入的 showSearchHistory 控制 -->
+    <!-- 查找聊天记录弹窗：通过父组件传入的 showSearchHistory 控制；仅搜当前会话 -->
     <SearchChatHistoryModal
       v-if="showSearchHistory"
       :conversations="conversations"
+      :conv-id="realConvMap[activeId] || currentContact.convId || 'none'"
       @close="closeSearchHistory"
       @jump="jumpToMessage"
     />
+
+    <!-- 轻量顶部 toast：群设置保存成功/失败提示 -->
+    <Teleport to="body">
+      <div v-if="toastState" class="wc-toast" :class="toastState.type" role="status">
+        <span class="wc-toast-dot" aria-hidden="true"></span>
+        <span class="wc-toast-text">{{ toastState.text }}</span>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -3925,6 +4523,22 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+/* 图片/文件消息气泡：去掉气泡背景/内边距/阴影，内容由自身卡片样式控制 */
+.bubble.bubble-media {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  min-width: 0;
+  /* 字色改用主题标题色：原 .bubble.out 的 #000 在无背景深色模式下不可见 */
+  color: var(--im-text-title);
+}
+
+/* 深色模式下图片/文件气泡同样无背景 */
+:global([data-theme='dark']) .bubble.bubble-media.in,
+:global([data-theme='dark']) .bubble.bubble-media.out {
+  background: transparent;
+}
+
 /* ===== 表情面板 ===== */
 .emoji-panel {
   position: absolute;
@@ -3987,13 +4601,67 @@ onBeforeUnmount(() => {
   cursor: zoom-in;
 }
 
-/* ===== 文件消息卡片 ===== */
+/* ===== 文件消息卡片：气泡背景移除后，文件卡片自带浅色底以保证可读性 ===== */
+/* 语音消息：点击气泡播放/暂停，播放中波形条起伏动画（currentColor 自适应收/发气泡配色） */
+.msg-voice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 72px;
+  padding: 2px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.voice-bars {
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  height: 16px;
+}
+
+.voice-bars i {
+  width: 3px;
+  border-radius: 1.5px;
+  background: currentColor;
+  opacity: 0.85;
+  transform-origin: center;
+}
+
+.voice-bars i:nth-child(1) { height: 6px; }
+.voice-bars i:nth-child(2) { height: 13px; }
+.voice-bars i:nth-child(3) { height: 9px; }
+
+/* 播放中：波形条依次起伏 */
+.voice-bars.playing i { animation: voiceBar 0.9s ease-in-out infinite; }
+.voice-bars.playing i:nth-child(2) { animation-delay: 0.15s; }
+.voice-bars.playing i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes voiceBar {
+  0%, 100% { transform: scaleY(0.45); }
+  50% { transform: scaleY(1); }
+}
+
+.voice-dur {
+  font-size: 0.857rem;
+  opacity: 0.8;
+  min-width: 0;
+}
+
+.voice-spinner {
+  width: 14px;
+  height: 14px;
+}
+
 .msg-file {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 160px;
-  padding: 6px 2px;
+  padding: 10px 12px;
+  background: var(--im-surface-2);
+  border: 1px solid var(--im-border);
+  border-radius: 10px;
   cursor: pointer;
 }
 
@@ -4002,11 +4670,15 @@ onBeforeUnmount(() => {
   width: 38px;
   height: 38px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--im-primary);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: inherit;
+}
+
+:global([data-theme='dark']) .file-icon {
+  background: rgba(96, 165, 250, 0.14);
 }
 
 .file-meta {
@@ -4559,7 +5231,8 @@ onBeforeUnmount(() => {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* 工具按钮与输入框间距收紧：gap + 拖动手柄高度合计 8px */
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -4587,12 +5260,44 @@ onBeforeUnmount(() => {
   background: var(--im-surface-2);
 }
 
+/* 语音录音中：图标变红提示正在录制 */
+.tool-btn.recording {
+  color: var(--im-danger, #ef4444);
+}
+
+/* 输入框拖动手柄：默认隐形，hover/拖动时显示灰色小横条提示可拖（高度已收紧，靠负 margin 保持可拖区域） */
+.input-resize-handle {
+  height: 4px;
+  /* 仅向输入框一侧借 3px 扩大可拖区域，避免遮挡上方工具按钮点击 */
+  margin-bottom: -3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  user-select: none;
+}
+
+.input-resize-handle .handle-bar {
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+
+.input-resize-handle:hover .handle-bar {
+  background: var(--im-border);
+}
+
 .input-box {
   border: 1px solid var(--im-border);
   background: var(--im-surface-2);
   border-radius: 10px;
   padding: 12px 14px;
-  min-height: 46px;
+  /* 默认两行高（内层 textarea 44px + 上下内边距）；拖动后由行内 height 接管 */
+  min-height: 68px;
+  max-height: 280px;
+  box-sizing: border-box;
   transition: border-color 0.2s;
 }
 
@@ -4612,8 +5317,9 @@ onBeforeUnmount(() => {
   font-size: 1rem;
   line-height: 22px;
   color: var(--im-text-title);
-  /* 默认一行高度，由 autoResizeInput 动态增高 */
-  height: 22px;
+  /* 默认两行高度，由 autoResizeInput 随内容动态增高（上限 6 行） */
+  height: 44px;
+  min-height: 44px;
 }
 
 .input-field::placeholder {
@@ -4903,6 +5609,12 @@ onBeforeUnmount(() => {
   gap: 10px;
   font-size: 0.929rem;
   color: var(--im-text-title);
+}
+
+/* 资料面板行内图标：统一次级灰（单聊/群聊一致），避免继承标题黑显得过重 */
+.row-ico {
+  color: var(--im-text-muted);
+  flex-shrink: 0;
 }
 
 .tag-group {
@@ -5358,5 +6070,196 @@ onBeforeUnmount(() => {
     opacity: 1;
     transform: none;
   }
+}
+
+/* ===== 轻量顶部 toast（与设置窗口同款） ===== */
+.wc-toast {
+  position: fixed;
+  top: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 10px 18px;
+  border-radius: 10px;
+  background: #1f2329;
+  color: #fff;
+  font-size: 0.9rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.24);
+  animation: mw-toast-in 0.22s ease;
+}
+
+.wc-toast-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: #8a919f;
+}
+
+.wc-toast.success .wc-toast-dot { background: #22c55e; }
+.wc-toast.error .wc-toast-dot { background: #ef4444; }
+.wc-toast.info .wc-toast-dot { background: #3b82f6; }
+
+.wc-toast-text {
+  word-break: break-all;
+  line-height: 1.45;
+}
+
+@keyframes mw-toast-in {
+  from { opacity: 0; transform: translate(-50%, -10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ===== 拖拽上传遮罩：蓝色晕染底 + 虚线卡片提示释放发送 ===== */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(37, 99, 235, 0.08);
+  backdrop-filter: blur(2px);
+  animation: dropOverlayIn 0.15s ease;
+  /* 不拦截拖放事件，drop 仍落在 .chat 上 */
+  pointer-events: none;
+}
+
+@keyframes dropOverlayIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.drop-card {
+  padding: 28px 40px;
+  border: 2px dashed var(--im-primary);
+  border-radius: 14px;
+  background: var(--im-surface);
+  color: var(--im-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 12px 36px rgba(37, 99, 235, 0.18);
+}
+
+.drop-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--im-text-title);
+}
+
+.drop-sub {
+  margin: 0;
+  font-size: 0.857rem;
+  color: var(--im-text-muted);
+}
+
+/* ===== 暂存附件区：发送前的图片/文件预览（输入框上方） ===== */
+.staged-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.staged-item {
+  position: relative;
+}
+
+.staged-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--im-border);
+  display: block;
+}
+
+.staged-file-card {
+  width: 136px;
+  height: 64px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  background: var(--im-surface-2);
+  border: 1px solid var(--im-border);
+  border-radius: 8px;
+  color: var(--im-primary);
+}
+
+.staged-file-name {
+  font-size: 0.786rem;
+  color: var(--im-text-title);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged-file-size {
+  font-size: 0.714rem;
+  color: var(--im-text-muted);
+}
+
+.staged-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(31, 35, 41, 0.72);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.staged-remove:hover {
+  background: var(--im-danger, #ef4444);
+}
+
+/* ===== 上传中旋转态（微信风格：未发送完成的图片/文件覆盖旋转指示） ===== */
+.msg-image-wrap {
+  position: relative;
+  line-height: 0;
+}
+
+.media-pending-mask {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+:global([data-theme='dark']) .media-pending-mask {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.media-spinner {
+  width: 22px;
+  height: 22px;
+  border-width: 2.5px;
+  border-color: rgba(37, 99, 235, 0.25);
+  border-top-color: var(--im-primary);
+}
+
+.file-spinner {
+  flex-shrink: 0;
+  margin-left: 4px;
 }
 </style>

@@ -77,10 +77,35 @@ func (h *Hub) Remove(c Conn) {
 	h.mu.Unlock()
 }
 
-// IsOnline 查询某用户是否在线。
+// IsOnline 查询某用户是否在线（presence 键存在即在线）。
 func (h *Hub) IsOnline(uid int64) bool {
-	_, err := h.rdb.Exists(context.Background(), presenceKey(uid)).Result()
-	return err == nil
+	n, err := h.rdb.Exists(context.Background(), presenceKey(uid)).Result()
+	return err == nil && n > 0
+}
+
+// TouchPresence 续期在线状态键：心跳到达时调用，防止 TTL 到期后
+// 连接仍存活却被误判离线（多节点路由错判、在线统计失真）。
+func (h *Hub) TouchPresence(uid int64) {
+	_ = h.rdb.Expire(context.Background(), presenceKey(uid), 90*time.Second)
+}
+
+// DisconnectAll 断开本节点全部连接（服务优雅退出时调用），
+// 各连接 readLoop 退出后触发 Remove 清理在线状态。
+func (h *Hub) DisconnectAll() {
+	h.mu.RLock()
+	conns := make([]Conn, 0)
+	for _, set := range h.conn {
+		for c := range set {
+			conns = append(conns, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range conns {
+		_ = c.Close()
+	}
+	if len(conns) > 0 {
+		log.L().Info("disconnect all connections on shutdown", "count", len(conns))
+	}
 }
 
 // Disconnect 强制断开指定用户的所有 WS 连接（用于退出登录等）。
