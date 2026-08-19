@@ -1,0 +1,14 @@
+# 二进制
+bin/
+
+# 本地配置（含敏感密钥，不入库）
+configs/local.yaml
+
+# 日志
+*.log
+build_out.txt
+vet_out.txt
+
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,394 @@
+// Package admin 实现管理后台：管理员登录鉴权、用户/群组管理、数据看板。
+package admin
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+
+	apperr "im/service/internal/pkg/err"
+	"im/service/internal/pkg/jwt"
+	"im/service/internal/pkg/pwd"
+	"im/service/internal/store/mysql"
+)
+
+// Store 管理后台依赖的存储接口。
+type Store interface {
+	GetAdminByUsername(username string) (*mysql.AdminUser, error)
+	CreateAdmin(a *mysql.AdminUser) error
+	ListAdmins() ([]*mysql.AdminUser, error)
+	CountUsers() (int64, error)
+	CountGroups() (int64, error)
+	CountMessages() (int64, error)
+	CountOnlinePresence() (int64, error)
+	UserTrendByDay(days int) ([]int64, error)
+	MessageTrendByDay(days int) ([]int64, error)
+	// 用户管理
+	ListUsers(offset, limit int, keyword string, status int64) ([]*mysql.User, error)
+	CountUsersTotal(keyword string, status int64) (int64, error)
+	// 群组管理
+	ListAllGroups(offset, limit int, keyword string) ([]*mysql.Group, error)
+	CountGroupsTotal(keyword string) (int64, error)
+	GetGroupByGUID(gUID int64) (*mysql.Group, error)
+	// 群聊天记录
+	ListMessagesBefore(convID, beforeSeq int64, limit int) ([]*mysql.Message, error)
+	GetUserByUID(uid int64) (*mysql.User, error)
+	// 业务操作
+	DisableUser(uid int64) error
+	EnableUser(uid int64) error
+	DeleteGroupByGUID(gUID int64) error
+	// 版本发布
+	GetAdminByID(id int64) (*mysql.AdminUser, error)
+	CreateAppVersion(v *mysql.AppVersion) error
+	ListAppVersions(offset, limit int) ([]*mysql.AppVersion, error)
+	CountAppVersions() (int64, error)
+	GetLatestAppVersion() (*mysql.AppVersion, error)
+}
+
+// Service 管理后台服务。
+type Service struct {
+	store Store
+	jwt   *jwt.Manager
+	genID func() int64
+	kick  func(uid int64, reason string) // 可选：禁用时踢该用户下线（由网关注入）
+}
+
+// New 创建管理后台服务。
+func New(store Store, jwtMgr *jwt.Manager, genID func() int64) *Service {
+	return &Service{store: store, jwt: jwtMgr, genID: genID}
+}
+
+// SetKickFunc 运行时注入"踢用户下线"的能力（由网关实现）。
+func (s *Service) SetKickFunc(fn func(uid int64, reason string)) {
+	s.kick = fn
+}
+
+// LoginReq 管理员登录请求。
+type LoginReq struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// LoginResult 登录成功返回。
+type LoginResult struct {
+	AccessToken string      `json:"access_token"`
+	Admin       *AdminInfo  `json:"admin"`
+}
+
+// AdminInfo 管理员信息。
+type AdminInfo struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Nickname string `json:"nickname"`
+	Role     int8   `json:"role"`
+}
+
+// Login 管理员登录，返回 admin JWT。
+func (s *Service) Login(req *LoginReq) (*LoginResult, error) {
+	if req.Username == "" || req.Password == "" {
+		return nil, apperr.BadRequest("用户名或密码不能为空")
+	}
+	a, err := s.store.GetAdminByUsername(req.Username)
+	if err != nil {
+		return nil, apperr.Unauthorized("用户名或密码错误")
+	}
+	if a.Status != 1 {
+		return nil, apperr.Forbidden("账号已被禁用")
+	}
+	if !pwd.Verify(a.PasswordHash, req.Password) {
+		return nil, apperr.Unauthorized("用户名或密码错误")
+	}
+	token, err := s.jwt.GenerateAdmin(a.ID)
+	if err != nil {
+		return nil, apperr.WrapInternal("签发令牌失败", err)
+	}
+	return &LoginResult{
+		AccessToken: token,
+		Admin:       &AdminInfo{ID: a.ID, Username: a.Username, Nickname: a.Nickname, Role: a.Role},
+	}, nil
+}
+
+// ---- 看板 ----
+
+// Dashboard 数据看板。
+type Dashboard struct {
+	Users    int64  `json:"users"`
+	Groups   int64  `json:"groups"`
+	Messages int64  `json:"messages"`
+	Online   int64  `json:"online"`
+	// 近 7 天趋势（下标 0 为最早一天），供柱状图等图表使用
+	UserTrend    []int64 `json:"user_trend"`
+	MessageTrend []int64 `json:"message_trend"`
+}
+
+// GetDashboard 统计概览。
+func (s *Service) GetDashboard() (*Dashboard, error) {
+	users, _ := s.store.CountUsers()
+	groups, _ := s.store.CountGroups()
+	messages, _ := s.store.CountMessages()
+	online, _ := s.store.CountOnlinePresence()
+	userTrend, _ := s.store.UserTrendByDay(7)
+	messageTrend, _ := s.store.MessageTrendByDay(7)
+	return &Dashboard{
+		Users: users, Groups: groups, Messages: messages, Online: online,
+		UserTrend: userTrend, MessageTrend: messageTrend,
+	}, nil
+}
+
+// ---- 用户管理 ----
+
+// UserDTO 用户管理视图。
+// Disabled：账号状态（0 正常 / 1 禁用）；Status：在线状态（0离线/1在线/2忙碌/3隐身）。
+type UserDTO struct {
+	UID       int64  `json:"uid"`
+	Account   string `json:"account"`
+	Nickname  string `json:"nickname"`
+	Status    int8   `json:"status"`
+	Disabled  int8   `json:"disabled"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+// TotalUsers 用户总数（keyword 非空时按关键词匹配计数；status > 0 时按状态过滤）。
+func (s *Service) TotalUsers(keyword string, status int64) int64 {
+	n, _ := s.store.CountUsersTotal(keyword, status)
+	return n
+}
+
+// TotalGroups 群总数（keyword 非空时按关键词匹配计数）。
+func (s *Service) TotalGroups(keyword string) int64 {
+	n, _ := s.store.CountGroupsTotal(keyword)
+	return n
+}
+
+// ListUsers 分页列出用户（keyword 匹配昵称/账号；status > 0 时按状态过滤）。
+func (s *Service) ListUsers(offset, limit int, keyword string, status int64) ([]*UserDTO, error) {
+	list, err := s.store.ListUsers(offset, limit, keyword, status)
+	if err != nil {
+		return nil, apperr.WrapInternal("获取用户列表失败", err)
+	}
+	out := make([]*UserDTO, 0, len(list))
+	for _, u := range list {
+		out = append(out, &UserDTO{
+			UID: u.UID, Account: u.Account, Nickname: u.Nickname, Status: u.Status,
+			Disabled: u.Disabled, CreatedAt: u.CreatedAt.Unix(),
+		})
+	}
+	return out, nil
+}
+
+// DisableUser 禁用用户账号；若用户在线，立刻将其踢下线。
+func (s *Service) DisableUser(uid int64) error {
+	if err := s.store.DisableUser(uid); err != nil {
+		return err
+	}
+	if s.kick != nil {
+		s.kick(uid, "账号已被管理员禁用")
+	}
+	return nil
+}
+
+// EnableUser 启用用户账号。
+func (s *Service) EnableUser(uid int64) error {
+	return s.store.EnableUser(uid)
+}
+
+// ---- 群组管理 ----
+
+// GroupDTO 群组管理视图。
+type GroupDTO struct {
+	GUID        int64  `json:"g_uid"`
+	Name        string `json:"name"`
+	OwnerUID    int64  `json:"owner_uid"`
+	MemberCount int    `json:"member_count"`
+	CreatedAt   int64  `json:"created_at"`
+}
+
+// ListGroups 分页列出群（keyword 匹配群名/群号）。
+func (s *Service) ListGroups(offset, limit int, keyword string) ([]*GroupDTO, error) {
+	list, err := s.store.ListAllGroups(offset, limit, keyword)
+	if err != nil {
+		return nil, apperr.WrapInternal("获取群列表失败", err)
+	}
+	out := make([]*GroupDTO, 0, len(list))
+	for _, g := range list {
+		out = append(out, &GroupDTO{
+			GUID: g.GUID, Name: g.Name, OwnerUID: g.OwnerUID, MemberCount: g.MemberCount,
+			CreatedAt: g.CreatedAt.Unix(),
+		})
+	}
+	return out, nil
+}
+
+// DeleteGroup 解散群。
+func (s *Service) DeleteGroup(gUID int64) error {
+	return s.store.DeleteGroupByGUID(gUID)
+}
+
+// ---- 群聊天记录 ----
+
+// GroupMessageDTO 群聊天记录单条消息。
+type GroupMessageDTO struct {
+	MsgID      int64  `json:"msg_id"`
+	Seq        int64  `json:"seq"`
+	SenderUID  int64  `json:"sender_uid"`
+	SenderName string `json:"sender_name"` // 发送者昵称（找不到时用账号/uid）
+	Type       int8   `json:"type"`        // 1 文本 / 2 图片 / 3 文件 / 4 语音 / 5 视频 / 6 系统
+	Content    string `json:"content"`     // 文本内容或媒体描述
+	Extra      string `json:"extra"`       // 媒体元数据（URL 等）
+	Status     int8   `json:"status"`      // 0 正常 / 1 已撤回
+	CreatedAt  int64  `json:"created_at"`  // Unix 秒
+}
+
+// GetGroupMessages 查询群聊天记录：取最近 limit 条（按 seq 倒序翻页，beforeSeq=0 取最新）。
+func (s *Service) GetGroupMessages(gUID, beforeSeq int64, limit int) ([]*GroupMessageDTO, error) {
+	g, err := s.store.GetGroupByGUID(gUID)
+	if err != nil {
+		return nil, apperr.BadRequest("群不存在")
+	}
+	if g.ConvID == 0 {
+		return []*GroupMessageDTO{}, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	list, err := s.store.ListMessagesBefore(g.ConvID, beforeSeq, limit)
+	if err != nil {
+		return nil, apperr.WrapInternal("查询群聊天记录失败", err)
+	}
+	out := make([]*GroupMessageDTO, 0, len(list))
+	for _, m := range list {
+		dto := &GroupMessageDTO{
+			MsgID: m.ID, Seq: m.Seq, SenderUID: m.SenderUID,
+			Type: m.Type, Content: previewText(m.Type, m.Content), Extra: m.Extra,
+			Status: m.Status, CreatedAt: m.CreatedAt.Unix(),
+		}
+		// 发送者昵称（优先昵称，其次账号）
+		if u, err := s.store.GetUserByUID(m.SenderUID); err == nil && u != nil {
+			dto.SenderName = u.Nickname
+			if dto.SenderName == "" {
+				dto.SenderName = u.Account
+			}
+		} else {
+			dto.SenderName = fmt.Sprintf("%d", m.SenderUID)
+		}
+		out = append(out, dto)
+	}
+	return out, nil
+}
+
+// previewText 生成消息摘要：文本直接返回，媒体消息给占位文案（不暴露原始 URL 语义）。
+func previewText(t int8, content string) string {
+	switch t {
+	case 1, 6: // 文本 / 系统消息
+		return content
+	case 2:
+		return "[图片]"
+	case 3:
+		return "[文件]"
+	case 4:
+		return "[语音]"
+	case 5:
+		return "[视频]"
+	default:
+		return content
+	}
+}
+
+// ---- 客户端版本发布（检查更新） ----
+
+// VersionDTO 版本信息对外视图。
+type VersionDTO struct {
+	Version      string `json:"version"`
+	DownloadURL  string `json:"download_url"`
+	Sha256       string `json:"sha256,omitempty"` // 安装包摘要，客户端自动更新下载后校验
+	ReleaseNotes string `json:"release_notes"`
+	Publisher    string `json:"publisher"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
+// PublishVersionReq 发布版本请求。
+type PublishVersionReq struct {
+	Version      string `json:"version"`
+	DownloadURL  string `json:"download_url"`
+	Sha256       string `json:"sha256"` // 必填：安装包 SHA-256，防客户端自动更新被投毒
+	ReleaseNotes string `json:"release_notes"`
+}
+
+var versionRe = regexp.MustCompile(`^\d+\.\d+(\.\d+)?$`)
+var sha256Re = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
+
+// PublishVersion 发布新版本：校验格式、版本号唯一；publisher 记录操作管理员用户名。
+func (s *Service) PublishVersion(adminID int64, req *PublishVersionReq) error {
+	version := strings.TrimSpace(req.Version)
+	if !versionRe.MatchString(version) {
+		return apperr.BadRequest("版本号格式不正确，应形如 1.1.0")
+	}
+	downloadURL := strings.TrimSpace(req.DownloadURL)
+	if downloadURL == "" {
+		return apperr.BadRequest("下载地址不能为空")
+	}
+	// 供应链安全（审计 P1）：强制要求安装包摘要，客户端自动更新下载后校验，防篡改/投毒
+	sha := strings.ToLower(strings.TrimSpace(req.Sha256))
+	if !sha256Re.MatchString(sha) {
+		return apperr.BadRequest("必须提供安装包的 SHA-256（64 位十六进制；上传安装包时会自动计算）")
+	}
+	publisher := ""
+	if a, err := s.store.GetAdminByID(adminID); err == nil && a != nil {
+		publisher = a.Username
+	}
+	v := &mysql.AppVersion{
+		ID:           s.genID(),
+		Version:      version,
+		DownloadURL:  downloadURL,
+		Sha256:       sha,
+		ReleaseNotes: strings.TrimSpace(req.ReleaseNotes),
+		Publisher:    publisher,
+	}
+	if err := s.store.CreateAppVersion(v); err != nil {
+		if strings.Contains(err.Error(), "Duplicate") {
+			return apperr.Conflict("该版本号已发布")
+		}
+		return apperr.WrapInternal("发布版本失败", err)
+	}
+	return nil
+}
+
+// ListVersions 版本列表（倒序，分页）。
+func (s *Service) ListVersions(offset, limit int) ([]*VersionDTO, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	list, err := s.store.ListAppVersions(offset, limit)
+	if err != nil {
+		return nil, 0, apperr.WrapInternal("获取版本列表失败", err)
+	}
+	total, _ := s.store.CountAppVersions()
+	out := make([]*VersionDTO, 0, len(list))
+	for _, v := range list {
+		out = append(out, toVersionDTO(v))
+	}
+	return out, total, nil
+}
+
+// LatestVersion 最新版本；未发布过任何版本时返回 nil。
+func (s *Service) LatestVersion() (*VersionDTO, error) {
+	v, err := s.store.GetLatestAppVersion()
+	if err != nil {
+		return nil, apperr.WrapInternal("查询最新版本失败", err)
+	}
+	if v == nil {
+		return nil, nil
+	}
+	return toVersionDTO(v), nil
+}
+
+func toVersionDTO(v *mysql.AppVersion) *VersionDTO {
+	return &VersionDTO{
+		Version:      v.Version,
+		DownloadURL:  v.DownloadURL,
+		Sha256:       v.Sha256,
+		ReleaseNotes: v.ReleaseNotes,
+		Publisher:    v.Publisher,
+		CreatedAt:    v.CreatedAt.Unix(),
+	}
+}

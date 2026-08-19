@@ -1,0 +1,56 @@
+name: Build Desktop Clients
+
+# 触发方式：
+# 1. 推送 v* 标签（如 v1.9.0）自动打包
+# 2. GitHub 仓库页面手动触发（Actions -> Build Desktop Clients -> Run workflow）
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: win
+            script: build:win
+          - os: macos-latest
+            name: mac
+            script: build:mac
+          - os: ubuntu-latest
+            name: linux
+            script: build:linux
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop_client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop_client/package-lock.json
+
+      # postinstall 会自动执行 electron-builder install-app-deps，
+      # 将 better-sqlite3 编译为当前平台 Electron ABI 版本
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (${{ matrix.name }})
+        run: npm run ${{ matrix.script }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: |
+            desktop_client/release/*.exe
+            desktop_client/release/*.dmg
+            desktop_client/release/*.AppImage
+            desktop_client/release/*.blockmap
+          if-no-files-found: error

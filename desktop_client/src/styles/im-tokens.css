@@ -1,0 +1,192 @@
+/*
+ * IM Tokens
+ * 从 ardot-design「桌面端即时通讯(IM)系统」设计变量提取（Light 模式）
+ * 用于登录窗口、注册窗口、主窗口等场景的 1:1 还原。
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+/*
+ * 基础字号跟随 --im-font-size-base（受设置窗口"字体大小"控制）。
+ * 设为变量后，所有使用 rem 单位的文字会自动跟随缩放；
+ * 组件内仍可显式使用 var(--im-font-size-base) 来确保响应。
+ */
+html {
+  font-size: var(--im-font-size-base);
+}
+
+:root {
+  /* 应用与表面色 */
+  --im-bg-app: #f2f2f5;
+  --im-surface: #ffffff;
+  --im-surface-2: #f7f7fa;
+
+  /* 边框与分隔线 */
+  --im-border: #e6e8eb;
+
+  /* 品牌主色 */
+  --im-primary: #2563eb;
+  --im-primary-hover: #1d4ed8;
+
+  /* 文字色阶 */
+  --im-text-primary: #1f2329;
+  --im-text-strong: #1f2329;
+  --im-text-title: #1f2329;
+  --im-text-secondary: #646a73;
+  --im-text-muted: #8f959e;
+  --im-text-tertiary: #8f959e;
+  --im-text-label: #646a73;
+
+  /* 状态色 */
+  --im-online: #22c55e;
+  --im-danger: #f04545;
+
+  /* 消息气泡 */
+  --im-bubble-in: #ffffff;
+  --im-chat-bg: #f5f5f7;
+
+  /* 未选中复选框描边 */
+  --im-check-stroke: #c9cdd4;
+
+  /* 品牌面板渐变 */
+  --im-brand-from: #2663eb;
+  --im-brand-to: #1a45c7;
+
+  /* ===== 控件专用色（用于下拉/分段/开关等容器背景） ===== */
+  /* 分段控件容器背景（浅色下浅灰，深色下偏暗灰） */
+  --im-segment-bg: #ebeff5;
+  /* 分段控件选中态背景（浅色下白色，深色下用 surface 浮起） */
+  --im-segment-active: #ffffff;
+  /* 下拉/选择按钮背景（浅色下浅灰，深色下更深） */
+  --im-select-bg: #f2f4f7;
+  --im-select-bg-hover: #e7eaef;
+  /* 开关关闭态背景 */
+  --im-toggle-off: #ccd1d6;
+  /* 蓝色描边按钮背景（用于更改/立即清理等） */
+  --im-soft-blue: #ebf2ff;
+  --im-soft-blue-hover: #dbe7ff;
+  /* 卡片背景（带边框的浅灰卡片，如二维码卡/好友请求卡） */
+  --im-card-bg: #f7fafc;
+  --im-card-border: #ebf0f2;
+  /* 输入框背景（搜索框/链接展示框） */
+  --im-input-bg: #f5f8fa;
+  /* 灰色描边按钮背景（拒绝/取消等次要按钮） */
+  --im-soft-gray: #f2f5f8;
+  --im-soft-gray-hover: #e7ebef;
+  /* 选中态品牌蓝背景（会话/联系人选中项，深色下用偏暗蓝） */
+  --im-selected: #dbeafe;
+  --im-selected-border: #dbeafe;
+  /* hover 用浅灰（非输入框容器的小 hover 面） */
+  --im-hover-gray: #e9ebee;
+  --im-hover-gray-active: #eef0f3;
+  /* 遮罩背景（弹窗背后的黑色透明层） */
+  --im-overlay: rgba(0, 0, 0, 0.35);
+
+  /* 圆角 */
+  --im-radius-window: 16px;
+  --im-radius-card: 8px;
+  --im-radius-md: 12px;
+  --im-radius-check: 4px;
+
+  /* 间距 */
+  --im-space-2: 8px;
+  --im-space-3: 12px;
+  --im-space-4: 16px;
+  --im-space-5: 24px;
+
+  /* 字体栈（Noto Sans SC 为设计稿指定字体） */
+  --im-font-family: 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', Roboto,
+    'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  /* ===== 字体大小（受设置窗口"字体大小"控制）=====
+     通过 :root[data-font-size] 覆盖 --im-font-size-base，
+     所有用 var(--im-font-size-base) 的元素会随之缩放。 */
+  --im-font-size-base: 14px;
+}
+
+/* 字体大小：小 */
+:root[data-font-size='small'] {
+  --im-font-size-base: 13px;
+}
+
+/* 字体大小：中（默认） */
+:root[data-font-size='medium'] {
+  --im-font-size-base: 14px;
+}
+
+/* 字体大小：大 */
+:root[data-font-size='large'] {
+  --im-font-size-base: 16px;
+}
+
+/* ===== 深色主题：通过在 <html> 上设置 data-theme="dark" 启用 ===== */
+:root[data-theme='dark'] {
+  /* 应用与表面色 */
+  --im-bg-app: #1a1a1f;
+  --im-surface: #242429;
+  --im-surface-2: #2c2c33;
+
+  /* 边框与分隔线 */
+  --im-border: #38383f;
+
+  /* 品牌主色（深色模式下保持品牌识别度，可微调亮度） */
+  --im-primary: #3b82f6;
+  --im-primary-hover: #60a5fa;
+
+  /* 文字色阶（深色模式下文字提亮） */
+  --im-text-primary: #f1f3f5;
+  --im-text-strong: #ffffff;
+  --im-text-title: #f1f3f5;
+  --im-text-secondary: #a8aeb7;
+  --im-text-muted: #8f959e;
+  --im-text-tertiary: #8f959e;
+  --im-text-label: #a8aeb7;
+
+  /* 状态色 */
+  --im-online: #4ade80;
+  --im-danger: #f87171;
+
+  /* 消息气泡（深色） */
+  --im-bubble-in: #2c2c33;
+  --im-chat-bg: #1a1a1f;
+
+  /* 未选中复选框描边 */
+  --im-check-stroke: #4a4a52;
+
+  /* 品牌面板渐变（深色下偏亮一点） */
+  --im-brand-from: #3b82f6;
+  --im-brand-to: #2563eb;
+
+  /* ===== 控件专用色 - 深色模式 ===== */
+  --im-segment-bg: #1a1a1f;
+  --im-segment-active: #38383f;
+  --im-select-bg: #1a1a1f;
+  --im-select-bg-hover: #2c2c33;
+  --im-toggle-off: #4a4a52;
+  --im-soft-blue: #1e3a5f;
+  --im-soft-blue-hover: #2a4d7a;
+  --im-card-bg: #2c2c33;
+  --im-card-border: #38383f;
+  --im-input-bg: #1a1a1f;
+  --im-soft-gray: #38383f;
+  --im-soft-gray-hover: #4a4a52;
+  --im-selected: #1e3a5f;
+  --im-selected-border: #1e3a5f;
+  --im-hover-gray: #38383f;
+  --im-hover-gray-active: #33333a;
+  --im-overlay: rgba(0, 0, 0, 0.6);
+}
