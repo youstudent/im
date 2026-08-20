@@ -1,0 +1,248 @@
+/* 资料面板（单聊/群聊）共享样式：由 SingleProfilePanel / GroupProfilePanel 在 scoped style 中 @import */
+
+.profile-header {
+  padding: 24px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.avatar.big {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 1.857rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.profile-name {
+  font-size: 1.286rem;
+  font-weight: 700;
+  color: var(--im-text-title);
+  line-height: 26px;
+}
+
+.profile-id {
+  font-size: 0.857rem;
+  color: var(--im-text-muted);
+}
+
+.online-pill {
+  padding: 3px 10px;
+  background: var(--im-surface-2);
+  border-radius: 999px;
+  font-size: 0.786rem;
+  color: #16a34a;
+  margin-top: -2px;
+}
+
+.action-row {
+  padding: 0 16px;
+  display: flex;
+  gap: 8px;
+}
+
+.btn-primary,
+.btn-outline {
+  flex: 1;
+  height: 36px;
+  border-radius: 8px;
+  font-size: 0.929rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-primary {
+  background: var(--im-primary);
+  color: #fff;
+  border: none;
+}
+
+.btn-primary:hover {
+  background: var(--im-primary-hover);
+}
+
+.btn-outline {
+  background: var(--im-surface-2);
+  color: var(--im-text-secondary);
+  border: 1px solid var(--im-border);
+}
+
+.btn-outline:hover {
+  background: var(--im-hover-gray-active);
+}
+
+.divider-line {
+  height: 1px;
+  background: var(--im-border);
+  margin: 8px 0;
+}
+
+.info-row {
+  height: 48px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.info-row.clickable {
+  cursor: pointer;
+}
+
+.info-row.clickable:hover {
+  background: var(--im-surface-2);
+}
+
+.info-label {
+  font-size: 0.929rem;
+  color: var(--im-text-muted);
+}
+
+.info-value {
+  font-size: 0.929rem;
+  color: var(--im-text-title);
+}
+
+/* 备注行：展示态点击可编辑，编辑态输入框 + 保存/取消 */
+.remark-row {
+  align-items: center;
+}
+
+.remark-value {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remark-value:hover {
+  color: var(--im-primary);
+}
+
+.remark-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 0.929rem;
+  color: var(--im-text-title);
+  background: var(--im-surface-2);
+  border: 1px solid var(--im-border, #e2e8f0);
+  border-radius: 6px;
+  outline: none;
+}
+
+.remark-input:focus {
+  border-color: var(--im-primary);
+}
+
+.remark-btn {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 0.857rem;
+  border-radius: 6px;
+  border: 1px solid var(--im-border, #e2e8f0);
+  background: var(--im-surface);
+  color: var(--im-text-title);
+  cursor: pointer;
+}
+
+.remark-btn.primary {
+  background: var(--im-primary);
+  border-color: var(--im-primary);
+  color: #fff;
+}
+
+.remark-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.info-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.929rem;
+  color: var(--im-text-title);
+}
+
+/* 资料面板行内图标：统一次级灰（单聊/群聊一致），避免继承标题黑显得过重 */
+.row-ico {
+  color: var(--im-text-muted);
+  flex-shrink: 0;
+}
+
+.tag-group {
+  display: flex;
+  gap: 6px;
+}
+
+.tag {
+  height: 24px;
+  padding: 0 10px;
+  background: var(--im-surface-2);
+  color: var(--im-text-secondary);
+  border-radius: 999px;
+  font-size: 0.786rem;
+  display: flex;
+  align-items: center;
+}
+
+.chevron {
+  flex-shrink: 0;
+}
+
+.toggle {
+  width: 36px;
+  height: 20px;
+  background: var(--im-primary);
+  border: none;
+  border-radius: 999px;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toggle:not(.on) {
+  background: var(--im-toggle-off);
+  justify-content: flex-start;
+}
+
+.toggle-dot {
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 999px;
+}
+
+.danger-text {
+  font-size: 0.929rem;
+  color: var(--im-danger);
+}
+
+/* 资料面板底部吸底区（消息免打扰 / 退出群聊），使用 margin-top: auto 自动贴底 */
+.profile-footer {
+  margin-top: auto;
+  background: var(--im-surface);
+  /* 让顶部 divider-line 与上面滚动内容分离，避免滚动时穿透视觉 */
+  flex-shrink: 0;
+  /* 底部留白：让"退出群聊"与面板底部保持间距 */
+  padding-bottom: 16px;
+}

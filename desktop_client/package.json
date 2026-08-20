@@ -45,7 +45,7 @@
   },
   "build": {
     "appId": "com.workbuddy.desktopclient",
-    "productName": "检车家IM",
+    "productName": "WorkChat",
     "copyright": "Copyright © 2026 WorkBuddy",
     "npmRebuild": true,
     "directories": {
@@ -66,8 +66,8 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "检车家IM",
-      "uninstallDisplayName": "检车家IM",
+      "shortcutName": "WorkChat",
+      "uninstallDisplayName": "WorkChat",
       "deleteAppDataOnUninstall": false
     },
     "mac": {

@@ -1,0 +1,117 @@
+/* 通用弹框骨架样式：由 InviteMembersModal / GroupSettingsModal 在 scoped style 中 @import */
+
+.invite-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  background: var(--im-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.invite-modal {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - 80px);
+  background: var(--im-surface);
+  border-radius: 16px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.invite-modal-header {
+  height: 56px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--im-border);
+}
+
+.invite-modal-title {
+  margin: 0;
+  font-size: 1.143rem;
+  font-weight: 700;
+  color: var(--im-text-title);
+}
+
+.invite-modal-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--im-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.invite-modal-close:hover {
+  background: var(--im-surface-2);
+}
+
+.invite-modal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.invite-modal-footer {
+  height: 64px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--im-border);
+}
+
+.invite-btn-cancel {
+  height: 38px;
+  padding: 0 20px;
+  background: var(--im-soft-gray);
+  color: var(--im-text-title);
+  border: none;
+  border-radius: 8px;
+  font-size: 0.929rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.invite-btn-cancel:hover {
+  background: var(--im-soft-gray-hover);
+}
+
+.invite-btn-confirm {
+  height: 38px;
+  padding: 0 28px;
+  background: var(--im-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.929rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.invite-btn-confirm:hover {
+  background: var(--im-primary-hover);
+}
+
+.invite-btn-confirm:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
