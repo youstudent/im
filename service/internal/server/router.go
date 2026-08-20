@@ -74,6 +74,12 @@ func NewRouter(deps *Dependencies, mode string) *gin.Engine {
 			convGroup.GET("/search", deps.MessageHdlr.Search)
 			convGroup.GET("/:id/messages", deps.MessageHdlr.GetHistory)
 			convGroup.POST("/:id/recall", deps.MessageHdlr.RecallMessage)
+			convGroup.PUT("/:id/settings", deps.MessageHdlr.UpdateSettings)
+			convGroup.DELETE("/:id", deps.MessageHdlr.DeleteConversation)
+			// G14 群消息已读人数（仅群主/管理员）；S6 表情回应增删/查询
+			convGroup.GET("/:id/messages/:mid/read_count", deps.MessageHdlr.ReadCount)
+			convGroup.POST("/:id/messages/:mid/reactions", deps.MessageHdlr.SetReaction)
+			convGroup.GET("/:id/messages/:mid/reactions", deps.MessageHdlr.GetReactions)
 		}
 		// 文件预签名（需鉴权）
 		fileGroup := api.Group("/files", middleware.JWT(deps.JWT))
@@ -104,6 +110,15 @@ func NewRouter(deps *Dependencies, mode string) *gin.Engine {
 			groupGroup.PUT("/:gid", deps.SocialHdlr.UpdateGroup)
 			groupGroup.POST("/:gid/members", deps.SocialHdlr.InviteToGroup)
 			groupGroup.DELETE("/:gid/members/me", deps.SocialHdlr.LeaveGroup)
+			groupGroup.POST("/:gid/members/:uid/kick", deps.SocialHdlr.RemoveMember)
+			groupGroup.PUT("/:gid/members/:uid/role", deps.SocialHdlr.SetMemberRole)
+			groupGroup.PUT("/:gid/owner", deps.SocialHdlr.TransferOwner)
+			groupGroup.PUT("/:gid/members/me/nickname", deps.SocialHdlr.SetMyNickname)
+			// 第三期（P2）：群设置开关 / 入群确认 / 成员禁言 / 保存到通讯录
+			groupGroup.PUT("/:gid/settings", deps.SocialHdlr.UpdateGroupSettings)
+			groupGroup.POST("/:gid/invites/decide", deps.SocialHdlr.DecideInvite)
+			groupGroup.PUT("/:gid/members/:uid/mute", deps.SocialHdlr.SetMemberMutedUntil)
+			groupGroup.PUT("/:gid/saved", deps.SocialHdlr.UpdateGroupSaved)
 		}
 		notifyGroup := api.Group("/notifications", middleware.JWT(deps.JWT))
 		{

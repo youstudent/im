@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { notifyApi, friendApi } from '../api/social'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { notifyApi, friendApi, groupApi } from '../api/social'
 
 /**
  * 通知中心页面
@@ -42,7 +42,7 @@ const activeTab = ref('all')
 const notifications = ref([])
 
 const colors = ['#f59e0b', '#8b5cf6', '#ed4799', '#2563eb', '#f97316', '#10b981', '#22c55e']
-const iconColors = { system: '#ed4799', friend: '#2563eb', invite: '#f97316' }
+const iconColors = { system: '#ed4799', friend: '#2563eb', invite: '#f97316', group_invite_confirm: '#f97316' }
 
 // 时间格式化：相对时间
 function formatTime(unixSec) {
@@ -63,7 +63,9 @@ async function loadNotifications() {
     if (!list) return
     notifications.value = list.map((n, i) => {
       const isFriend = n.type === 'friend'
-      const avatarText = isFriend ? (n.summary || '友')[0] : n.type === 'system' ? '系' : (n.summary || '?')[0]
+      const isInviteConfirm = n.type === 'group_invite_confirm'
+      // @提及通知头像位用 "@" 标识；好友/系统/其他取摘要首字
+      const avatarText = isFriend ? (n.summary || '友')[0] : n.type === 'system' ? '系' : n.type === 'mention' ? '@' : (n.summary || '?')[0]
       return {
         id: n.id,
         type: n.type,
@@ -77,6 +79,8 @@ async function loadNotifications() {
         time: formatTime(n.time),
         action: '', // 取消"接受"操作按钮，仅展示通知
         reqId: isFriend ? parseReqId(n.action) : null,
+        // 入群确认（G7）：解析 action 携带的群号/被邀请人，供同意/拒绝按钮使用
+        inviteInfo: isInviteConfirm ? parseInviteInfo(n.action) : null,
       }
     })
   } catch {
@@ -94,7 +98,32 @@ function parseReqId(action) {
   }
 }
 
-onMounted(loadNotifications)
+// 解析入群确认 action：{ g_uid, inviter_uid, invitee_uids } → { gUid, inviteeUids }
+function parseInviteInfo(action) {
+  if (!action) return null
+  try {
+    const obj = JSON.parse(action)
+    const uids = Array.isArray(obj.invitee_uids) ? obj.invitee_uids.map(String) : []
+    if (!obj.g_uid || !uids.length) return null
+    return { gUid: String(obj.g_uid), inviteeUids: uids }
+  } catch {
+    return null
+  }
+}
+
+onMounted(() => {
+  loadNotifications()
+  // 入群确认/好友申请等 WS 事件到达时刷新列表（KeepAlive 缓存页不自已重新挂载）
+  if (typeof window !== 'undefined') {
+    window.addEventListener('notification:refresh', loadNotifications)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('notification:refresh', loadNotifications)
+  }
+})
 
 // 全部未读数量
 const unreadCount = computed(() => notifications.value.filter((n) => n.unread).length)
@@ -105,7 +134,8 @@ const filteredNotifications = computed(() => {
     case 'unread':
       return notifications.value.filter((n) => n.unread)
     case 'mention':
-      return notifications.value.filter((n) => n.type === 'mention' || n.type === 'invite')
+      // @提及分类：仅展示服务端写入的 mention 条目（群消息 @ 后落 notifications 表）
+      return notifications.value.filter((n) => n.type === 'mention')
     case 'system':
       return notifications.value.filter((n) => n.type === 'system')
     case 'all':
@@ -151,6 +181,24 @@ async function acceptFriend(n) {
     await friendApi.handleRequest(n.reqId, true)
   } catch {
     /* 处理失败 */
+  }
+}
+
+// ---- 交互：入群确认（G7）——同意/拒绝 ----
+async function decideInvite(n, accept) {
+  const info = n.inviteInfo
+  if (!info) return
+  const idx = notifications.value.findIndex((x) => x.id === n.id)
+  try {
+    // 对 action 中的每个被邀请人逐条处理（同意入群 / 拒绝）
+    for (const uid of info.inviteeUids) {
+      await groupApi.decideInvite(info.gUid, uid, accept)
+    }
+    if (idx > -1) notifications.value.splice(idx, 1)
+  } catch (e) {
+    if (idx > -1) {
+      notifications.value[idx] = { ...notifications.value[idx], summary: notifications.value[idx].summary + '（' + (e.message || '处理失败') + '）' }
+    }
   }
 }
 
@@ -275,13 +323,22 @@ function goHistory() {
               <div class="meta">
                 <span v-if="n.unread" class="unread-dot" aria-label="未读"></span>
                 <button
-                  v-if="n.action === 'accept'"
+                  v-if="n.type === 'group_invite_confirm' && n.inviteInfo"
                   class="accept-btn"
                   type="button"
-                  @click.stop="acceptFriend(n)"
-                  aria-label="接受好友请求"
+                  @click.stop="decideInvite(n, true)"
+                  aria-label="同意入群"
                 >
-                  接受
+                  同意
+                </button>
+                <button
+                  v-if="n.type === 'group_invite_confirm' && n.inviteInfo"
+                  class="reject-btn"
+                  type="button"
+                  @click.stop="decideInvite(n, false)"
+                  aria-label="拒绝入群"
+                >
+                  拒绝
                 </button>
                 <span class="time">{{ n.time }}</span>
               </div>
@@ -665,6 +722,24 @@ function goHistory() {
 
 .accept-btn:hover {
   background: var(--im-primary-hover);
+}
+
+.reject-btn {
+  height: 32px;
+  padding: 0 16px;
+  background: transparent;
+  color: var(--im-text-secondary);
+  border: 1px solid var(--im-border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.929rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.reject-btn:hover {
+  background: var(--im-surface-2);
+  color: var(--im-text-title);
 }
 
 .time {

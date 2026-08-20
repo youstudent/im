@@ -1,7 +1,9 @@
 package message
 
 import (
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +25,7 @@ type mockStore struct {
 	convs        map[int64]*mysql.Conversation // key: ownerUID:targetID
 	msgs         map[int64][]*mysql.Message    // key: convID
 	readSeq      map[string]int64              // key: uid:convID
+	reactions    map[string][]mysql.Reaction   // key: convID:msgID（S6）
 	convSeq      int64
 	msgSeq       map[int64]int64
 	missingUIDs  map[int64]bool // 视为“不存在”的 uid（发送守卫测试用）
@@ -30,7 +33,7 @@ type mockStore struct {
 }
 
 func newMockStore() *mockStore {
-	return &mockStore{convs: map[int64]*mysql.Conversation{}, msgs: map[int64][]*mysql.Message{}, readSeq: map[string]int64{}, msgSeq: map[int64]int64{}, missingUIDs: map[int64]bool{}, disabledUIDs: map[int64]bool{}}
+	return &mockStore{convs: map[int64]*mysql.Conversation{}, msgs: map[int64][]*mysql.Message{}, readSeq: map[string]int64{}, reactions: map[string][]mysql.Reaction{}, msgSeq: map[int64]int64{}, missingUIDs: map[int64]bool{}, disabledUIDs: map[int64]bool{}}
 }
 
 func convKey(a, b int64) int64 { return a*1000000 + b }
@@ -118,7 +121,7 @@ func (m *mockStore) ListConversationsChangedSince(ownerUID int64, since time.Tim
 	}
 	return list, nil
 }
-func (m *mockStore) UpdateConversationLastMsg(ownerUID, targetID int64, lastMsgID int64, text string, t time.Time) error {
+func (m *mockStore) UpdateConversationLastMsg(ownerUID, targetID int64, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if c, ok := m.convs[convKey(ownerUID, targetID)]; ok {
@@ -128,6 +131,8 @@ func (m *mockStore) UpdateConversationLastMsg(ownerUID, targetID int64, lastMsgI
 		c.LastMsgID = lastMsgIDCopy
 		c.LastMsgText = textCopy
 		c.LastMsgTime = &timeCopy
+		c.LastSenderUID = senderUID
+		c.LastSenderName = senderName
 	}
 	return nil
 }
@@ -136,6 +141,22 @@ func (m *mockStore) UpdateConversationSyncedSeq(ownerUID, targetID, seq int64) e
 	defer m.mu.Unlock()
 	if c, ok := m.convs[convKey(ownerUID, targetID)]; ok {
 		c.LastSyncedSeq = seq
+	}
+	return nil
+}
+func (m *mockStore) UpdateConversationSettings(ownerUID, convID int64, pinned, muted *int8) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.convs {
+		if c.ID == convID && c.OwnerUID == ownerUID {
+			if pinned != nil {
+				c.Pinned = *pinned
+			}
+			if muted != nil {
+				c.Muted = *muted
+			}
+			return nil
+		}
 	}
 	return nil
 }
@@ -163,15 +184,27 @@ func (m *mockStore) EnsureGroupConversationViews(convID, gUID int64, memberUIDs 
 	return nil
 }
 
-func (m *mockStore) UpdateGroupConversationsLastMsg(gUID, lastMsgID int64, text string, t time.Time) error {
-	return m.updateGroupLastMsg(gUID, 0, false, lastMsgID, text, t)
+func (m *mockStore) UpdateGroupConversationsLastMsg(gUID, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error {
+	return m.updateGroupLastMsg(gUID, 0, false, lastMsgID, text, t, senderUID, senderName)
 }
 
-func (m *mockStore) UpdateGroupConversationsLastMsgExcept(gUID, excludeUID, lastMsgID int64, text string, t time.Time) error {
-	return m.updateGroupLastMsg(gUID, excludeUID, true, lastMsgID, text, t)
+func (m *mockStore) DeleteConversationByID(ownerUID, convID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, c := range m.convs {
+		if c.OwnerUID == ownerUID && c.ID == convID {
+			delete(m.convs, k)
+			return nil
+		}
+	}
+	return nil
 }
 
-func (m *mockStore) updateGroupLastMsg(gUID, excludeUID int64, exclude bool, lastMsgID int64, text string, t time.Time) error {
+func (m *mockStore) UpdateGroupConversationsLastMsgExcept(gUID, excludeUID, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error {
+	return m.updateGroupLastMsg(gUID, excludeUID, true, lastMsgID, text, t, senderUID, senderName)
+}
+
+func (m *mockStore) updateGroupLastMsg(gUID, excludeUID int64, exclude bool, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, c := range m.convs {
@@ -185,6 +218,8 @@ func (m *mockStore) updateGroupLastMsg(gUID, excludeUID int64, exclude bool, las
 		c.LastMsgID = lastMsgID
 		c.LastMsgText = text
 		c.LastMsgTime = &timeCopy
+		c.LastSenderUID = senderUID
+		c.LastSenderName = senderName
 	}
 	return nil
 }
@@ -231,6 +266,68 @@ func clampMin0(n int64) int64 {
 		return 0
 	}
 	return n
+}
+
+// ---- G14 已读人数 / S6 表情回应 mock ----
+func (m *mockStore) CountRead(convID, seq int64) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	suffix := ":" + strconv.FormatInt(convID, 10)
+	n := 0
+	for key, s := range m.readSeq {
+		if strings.HasSuffix(key, suffix) && s >= seq {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *mockStore) AddReaction(id, convID, msgID, uid int64, emoji string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := fmt.Sprintf("%d:%d", convID, msgID)
+	for _, r := range m.reactions[key] {
+		if r.UID == uid && r.Emoji == emoji {
+			return nil // 幂等
+		}
+	}
+	m.reactions[key] = append(m.reactions[key], mysql.Reaction{ID: id, ConvID: convID, MsgID: msgID, UID: uid, Emoji: emoji})
+	return nil
+}
+
+func (m *mockStore) RemoveReaction(convID, msgID, uid int64, emoji string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := fmt.Sprintf("%d:%d", convID, msgID)
+	list := m.reactions[key]
+	out := list[:0]
+	for _, r := range list {
+		if !(r.UID == uid && r.Emoji == emoji) {
+			out = append(out, r)
+		}
+	}
+	m.reactions[key] = out
+	return nil
+}
+
+func (m *mockStore) ListReactions(convID int64, msgIDs []int64) (map[int64][]mysql.Reaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[int64][]mysql.Reaction, len(msgIDs))
+	for _, mid := range msgIDs {
+		key := fmt.Sprintf("%d:%d", convID, mid)
+		if list := m.reactions[key]; len(list) > 0 {
+			out[mid] = append(out[mid], list...)
+		}
+	}
+	return out, nil
+}
+
+func (m *mockStore) ListReactionEmojis(convID, msgID int64) ([]mysql.Reaction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := fmt.Sprintf("%d:%d", convID, msgID)
+	return append([]mysql.Reaction{}, m.reactions[key]...), nil
 }
 
 func (m *mockStore) CreateMessage(msg *mysql.Message) (int64, error) {
@@ -543,6 +640,10 @@ func TestGroupSendSyncsAllMembersConvLastMsg(t *testing.T) {
 		if conv.LastMsgText != "群公告" || conv.LastMsgID == 0 {
 			t.Fatalf("owner %d conv last_msg not updated: text=%q id=%d", owner, conv.LastMsgText, conv.LastMsgID)
 		}
+		// 普通群消息应记录发送者（客户端列表拼 "发送者: 内容" 前缀）
+		if conv.LastSenderUID != 1001 {
+			t.Fatalf("owner %d conv last_sender_uid=%d, want 1001", owner, conv.LastSenderUID)
+		}
 		// 接收方（1002/1003）已同步游标应更新为最新 seq；发送方（1001）不更新，避免误显未读
 		wantSeq := int64(1)
 		if owner == 1001 {
@@ -562,6 +663,68 @@ func TestGroupSendSyncsAllMembersConvLastMsg(t *testing.T) {
 		} else if conv.LastMsgID != id0 {
 			t.Fatalf("members last_msg_id inconsistent: owner %d id=%d, base=%d", owner, conv.LastMsgID, id0)
 		}
+	}
+}
+
+// TestGroupSendMentionNotify 验证 @ 提及通知钩子：群消息携带 mention_uids 落库后，
+// 仅对真实群成员触发（排除发送者自身与伪造 uid）；无 @ 不触发；幂等重发不重复触发。
+func TestGroupSendMentionNotify(t *testing.T) {
+	svc, store, _ := newTestSvc()
+	svc.SetGroupMembers(func(gUID int64) ([]int64, error) {
+		if gUID == 5001 {
+			return []int64{1001, 1002, 1003}, nil
+		}
+		return nil, mysql.ErrNotFound
+	})
+	var calls int
+	var gotMentioned []int64
+	var gotSender int64
+	svc.SetMentionNotify(func(gUID, convID, msgID, senderUID int64, senderName string, mentionedUIDs []int64, preview string) {
+		calls++
+		gotMentioned = append([]int64(nil), mentionedUIDs...)
+		gotSender = senderUID
+	})
+	// @1002（成员）、9999（非成员应过滤）、1001（发送者自身应排除）
+	dto, _, err := svc.Send(1001, &SendReq{
+		TargetID: 5001, ConvType: 2, Type: 1, Content: "hello @1002",
+		Extra: `{"mention_uids":["1002","9999","1001"]}`,
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("mentionNotify 应触发 1 次，实际: %d", calls)
+	}
+	if len(gotMentioned) != 1 || gotMentioned[0] != 1002 {
+		t.Fatalf("应仅通知真实成员 1002，实际: %v", gotMentioned)
+	}
+	if gotSender != 1001 {
+		t.Fatalf("senderUID 应为 1001，实际: %d", gotSender)
+	}
+	// 幂等重发：不重复通知
+	if _, _, err := svc.Send(1001, &SendReq{
+		MsgID: dto.ID, TargetID: 5001, ConvType: 2, Type: 1, Content: "hello @1002",
+		Extra: `{"mention_uids":["1002"]}`,
+	}); err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("幂等重发不应重复通知，实际触发: %d", calls)
+	}
+	// 无 @ 消息：不触发
+	if _, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "普通消息"}); err != nil {
+		t.Fatalf("send plain: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("无 @ 消息不应触发通知，实际触发: %d", calls)
+	}
+	// 群会话视图应记录最后消息发送者（客户端列表拼 "发送者: 内容" 前缀）
+	conv, err := store.GetConversation(1002, 5001)
+	if err != nil {
+		t.Fatalf("get conv: %v", err)
+	}
+	if conv.LastSenderUID != 1001 {
+		t.Fatalf("last_sender_uid 应为 1001，实际: %d", conv.LastSenderUID)
 	}
 }
 
@@ -779,5 +942,147 @@ func TestHistoryRequiresMembership(t *testing.T) {
 	}
 	if _, err := svc.GetHistoryAfterSeq(9999, conv.ID, 0, 50); err == nil {
 		t.Fatal("非参与者应被拒绝增量拉取")
+	}
+}
+
+// ---- 第三期（P2）：G2 @所有人 / G14 群已读人数 / S6 表情回应 ----
+
+// TestG2AtAll 验证 @所有人：mention_uids 含 "all" 时仅群主/管理员可用，展开为全部成员通知；普通成员被拒。
+func TestG2AtAll(t *testing.T) {
+	svc, _, _ := newTestSvc()
+	svc.SetGroupMembers(func(gUID int64) ([]int64, error) {
+		if gUID == 5001 {
+			return []int64{1001, 1002, 1003}, nil
+		}
+		return nil, mysql.ErrNotFound
+	})
+	// 角色：1001 群主（0），1002 普通成员（2）
+	svc.SetGroupRoleCheck(func(gUID, uid int64) (int8, error) {
+		if uid == 1001 {
+			return 0, nil
+		}
+		return 2, nil
+	})
+	var calls int
+	var gotMentioned []int64
+	svc.SetMentionNotify(func(gUID, convID, msgID, senderUID int64, senderName string, mentionedUIDs []int64, preview string) {
+		calls++
+		gotMentioned = append([]int64(nil), mentionedUIDs...)
+	})
+	// 群主 @所有人：展开为除自己外全部成员
+	if _, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "全体注意", Extra: `{"mention_uids":["all"]}`}); err != nil {
+		t.Fatalf("群主 @所有人应成功: %v", err)
+	}
+	if calls != 1 || len(gotMentioned) != 2 || !containsInt64(gotMentioned, 1002) || !containsInt64(gotMentioned, 1003) {
+		t.Fatalf("@所有人应通知 1002/1003，实际 calls=%d mentioned=%v", calls, gotMentioned)
+	}
+	// 普通成员 @所有人：拒绝
+	calls = 0
+	if _, _, err := svc.Send(1002, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "越权", Extra: `{"mention_uids":["all"]}`}); err == nil {
+		t.Fatal("普通成员 @所有人应被拒绝")
+	}
+	if calls != 0 {
+		t.Fatalf("拒绝时不应触发通知，实际 calls=%d", calls)
+	}
+}
+
+func containsInt64(list []int64, v int64) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// TestG14ReadCount 验证群已读人数：单聊拒绝、非会话成员拒绝、普通群成员拒绝、群主可查。
+func TestG14ReadCount(t *testing.T) {
+	svc, _, _ := newTestSvc()
+	svc.SetGroupMembers(func(gUID int64) ([]int64, error) {
+		if gUID == 5001 {
+			return []int64{1001, 1002, 1003}, nil
+		}
+		return nil, mysql.ErrNotFound
+	})
+	svc.SetGroupRoleCheck(func(gUID, uid int64) (int8, error) {
+		if uid == 1001 {
+			return 0, nil
+		}
+		return 2, nil
+	})
+	dto, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "已读测试"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	// 单聊：拒绝
+	if _, err := svc.ReadCount(1001, dto.ConvID+9999, dto.ID); err == nil {
+		t.Fatal("不存在的会话应拒绝")
+	}
+	// 普通群成员：拒绝
+	if _, err := svc.ReadCount(1002, dto.ConvID, dto.ID); err == nil {
+		t.Fatal("普通成员应被拒绝查看已读人数")
+	}
+	// 群主：可查（0 人已读）
+	n, err := svc.ReadCount(1001, dto.ConvID, dto.ID)
+	if err != nil {
+		t.Fatalf("群主查已读人数: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("初始已读人数应为 0，实际 %d", n)
+	}
+	// 1002 已读后计数 1
+	if err := svc.MarkRead(1002, dto.ConvID, dto.Seq); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+	if n, _ := svc.ReadCount(1001, dto.ConvID, dto.ID); n != 1 {
+		t.Fatalf("已读人数应为 1，实际 %d", n)
+	}
+}
+
+// TestS6Reaction 验证表情回应：增删/幂等/非成员拒绝/撤回消息拒绝/查询。
+func TestS6Reaction(t *testing.T) {
+	svc, _, _ := newTestSvc()
+	svc.SetGroupMembers(func(gUID int64) ([]int64, error) {
+		if gUID == 5001 {
+			return []int64{1001, 1002, 1003}, nil
+		}
+		return nil, mysql.ErrNotFound
+	})
+	dto, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "回应我"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	// 非会话成员（9999）拒绝
+	if _, err := svc.SetReaction(9999, dto.ConvID, dto.ID, "👍", true); err == nil {
+		t.Fatal("非会话成员应被拒绝")
+	}
+	// 添加
+	change, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "👍", true)
+	if err != nil {
+		t.Fatalf("add reaction: %v", err)
+	}
+	if !change.Add || change.Emoji != "👍" || change.UID != 1002 {
+		t.Fatalf("change 异常: %+v", change)
+	}
+	// 重复添加幂等（行数不增）
+	if _, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "👍", true); err != nil {
+		t.Fatalf("dup add: %v", err)
+	}
+	if list, _ := svc.GetReactions(1001, dto.ConvID, dto.ID); len(list) != 1 {
+		t.Fatalf("reactions 应为 1 条，实际 %d", len(list))
+	}
+	// 移除
+	if _, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "👍", false); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if list, _ := svc.GetReactions(1001, dto.ConvID, dto.ID); len(list) != 0 {
+		t.Fatalf("移除后应为空，实际 %d", len(list))
+	}
+	// 撤回消息后拒绝添加
+	if _, err := svc.RecallMessage(1001, dto.ConvID, dto.ID); err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	if _, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "❤️", true); err == nil {
+		t.Fatal("撤回消息不应能添加回应")
 	}
 }

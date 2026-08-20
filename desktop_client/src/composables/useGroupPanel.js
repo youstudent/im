@@ -73,23 +73,52 @@ export function useGroupPanel(ctx) {
     try {
       const g = await groupApi.get(gUid)
       const uids = Array.isArray(g.members) ? g.members : []
-      // 通过好友列表构建 uid→昵称 映射
+      // 通过好友列表构建 uid → 备注 / 用户昵称 映射（非好友两项均为空）
       const friendList = await friendApi.list()
-      const nameMap = {}
+      const remarkMap = {}
+      const userNickMap = {}
       ;(friendList || []).forEach((f) => {
-        nameMap[f.uid] = f.remark || f.nickname || `用户${f.uid}`
+        remarkMap[f.uid] = f.remark || ''
+        userNickMap[f.uid] = f.nickname || ''
       })
-      const members = uids.map((uid, i) => ({
-        uid,
-        name: nameMap[uid] || `成员${uid}`,
-        avatar: (nameMap[uid] || '?')[0],
-        color: MOCK_COLOR_POOL[i % MOCK_COLOR_POOL.length],
-      }))
-      // 群资料：名称/公告/我的角色（0 群主 / 1 管理员 / 2 成员），角色决定群设置可编辑性
+      const members = uids.map((uid, i) => {
+        const remark = remarkMap[uid] || ''
+        const userNickname = userNickMap[uid] || ''
+        // 群内昵称（未设置为空）
+        const groupNickname = (g.member_nicknames && g.member_nicknames[String(uid)]) || ''
+        // 展示名优先级（微信规则）：好友备注 > 群内昵称 > 用户昵称
+        const name = remark || groupNickname || userNickname || `成员${uid}`
+        return {
+          uid,
+          name,
+          remark,
+          userNickname,
+          avatar: name[0],
+          color: MOCK_COLOR_POOL[i % MOCK_COLOR_POOL.length],
+          // 成员角色（0 群主 / 1 管理员 / 2 成员）：后端 member_roles 的 JSON key 为字符串 uid
+          role: g.member_roles && g.member_roles[String(uid)] != null ? Number(g.member_roles[String(uid)]) : 2,
+          nickname: groupNickname,
+          // G8 禁言截止（unix 毫秒，0=未禁言）：member_mutes 的 JSON key 为字符串 uid
+          mutedUntil: g.member_mutes ? Number(g.member_mutes[String(uid)] || 0) : 0,
+        }
+      })
+      // 展示顺序：群主(0) → 管理员(1) → 普通成员(2)；后端已按入群时间返回，
+      // 稳定排序保证同角色内保持入群先后
+      members.sort((a, b) => a.role - b.role)
+      // 群资料：名称/公告/我的角色（0 群主 / 1 管理员 / 2 成员），角色决定群设置可编辑性；
+      // ownerUid 供成员管理权限判定；myNickname 供群昵称编辑入口回显；
+      // inviteConfirm/muteAll/saved 为 P2 群设置开关（G7/G8/G10）
       const info = {
         name: g.name || '',
         announcement: g.announcement || '',
         myRole: g.my_role != null ? Number(g.my_role) : 2,
+        ownerUid: g.owner_uid != null ? String(g.owner_uid) : '',
+        myNickname: g.my_nickname || '',
+        inviteConfirm: g.invite_confirm != null ? Number(g.invite_confirm) : 0,
+        muteAll: g.mute_all != null ? Number(g.mute_all) : 0,
+        saved: g.saved != null ? Number(g.saved) : 1,
+        // G8 我的禁言截止（unix 毫秒，0=未禁言）：决定输入框禁用态
+        myMutedUntil: g.my_muted_until ? Number(g.my_muted_until) : 0,
       }
       liveGroupMembers.value = members
       groupInfo.value = info
@@ -179,11 +208,22 @@ export function useGroupPanel(ctx) {
     showGroupSettings.value = true
   }
 
-  // 弹窗保存成功回调（接口调用在弹窗组件内完成）
-  function onGroupSettingsSaved({ name, announcement }) {
+  // 弹窗保存成功回调（接口调用在弹窗组件内完成）：群名/公告 + 入群确认/全员禁言/保存到通讯录开关
+  function onGroupSettingsSaved({ name, announcement, inviteConfirm, muteAll, saved }) {
     const c = currentContact.value
     if (!c) return
     applyGroupSettings(c, name, announcement)
+    const info = {
+      ...groupInfo.value,
+      name,
+      announcement,
+      inviteConfirm: inviteConfirm != null ? inviteConfirm : groupInfo.value.inviteConfirm,
+      muteAll: muteAll != null ? muteAll : groupInfo.value.muteAll,
+      saved: saved != null ? saved : groupInfo.value.saved,
+    }
+    groupInfo.value = info
+    const cached = groupMembersCache.get(c.targetId)
+    if (cached) cached.info = info
     showToast('群设置已保存', 'success')
   }
 
@@ -228,14 +268,148 @@ export function useGroupPanel(ctx) {
     }
   }
 
-  // 按关键字过滤后的成员列表（搜索用）
+  // 成员展示名（微信优先级）：好友备注 > 群内昵称 > 用户昵称；
+  // 备注/群昵称变更时只要更新对应字段，渲染处调用本函数即可同步刷新
+  function memberDisplayName(m) {
+    if (!m) return ''
+    return m.remark || m.nickname || m.userNickname || m.name || ''
+  }
+
+  // 按关键字过滤后的成员列表（搜索用）：按展示名（备注优先）匹配，与界面所见一致
   const filteredMembers = computed(() => {
     const kw = memberSearch.value.trim().toLowerCase()
     if (!kw) return groupMeta.value.members
     return groupMeta.value.members.filter((m) =>
-      (m.name ?? '').toLowerCase().includes(kw)
+      memberDisplayName(m).toLowerCase().includes(kw)
     )
   })
+
+  // ===== 成员管理：移除成员 / 设撤管理员（后端鉴权兑底，前端按角色控制入口可见性） =====
+  const isGroupOwner = computed(() => groupInfo.value.myRole === 0)
+
+  // 当前登录 uid（与 MainWindow.meUid 同源：localStorage 登录信息）
+  function myUid() {
+    try {
+      return String(JSON.parse(localStorage.getItem('workchat:me') || '{}').uid || '')
+    } catch {
+      return ''
+    }
+  }
+
+  // 是否可管理某成员（微信规则）：群主可管理除自己外所有人；管理员仅可管理普通成员；
+  // 自己与群主永远不可被管理
+  function canOperateMember(member) {
+    const my = groupInfo.value.myRole
+    if (my == null || my > 1) return false
+    if (!member || member.uid == null) return false
+    if (String(member.uid) === myUid()) return false
+    if (member.role === 0 || String(member.uid) === groupInfo.value.ownerUid) return false
+    if (my === 1 && member.role === 1) return false // 管理员不可动其他管理员
+    return true
+  }
+
+  // 移除成员：二次确认后调接口，成功即时从成员列表移除并同步缓存
+  async function removeMember(member) {
+    const c = currentContact.value
+    if (!c || c.type !== 'group' || !member || member.uid == null) return
+    if (!confirm(`确定将“${member.name}”移出群聊吗？`)) return
+    try {
+      await groupApi.kick(c.targetId, member.uid)
+      liveGroupMembers.value = liveGroupMembers.value.filter((m) => m.uid !== member.uid)
+      const cached = groupMembersCache.get(c.targetId)
+      if (cached) cached.members = liveGroupMembers.value
+      showToast(`已将 ${member.name} 移出群聊`, 'success')
+    } catch (e) {
+      showToast(e.message || '移除成员失败', 'error')
+    }
+  }
+
+  // 设为/取消管理员（仅群主）：role 1 设为管理员 / 2 撤销，成功即时更新角色标签
+  async function setMemberRole(member, role) {
+    const c = currentContact.value
+    if (!c || c.type !== 'group' || !member || member.uid == null) return
+    try {
+      await groupApi.setRole(c.targetId, member.uid, role)
+      member.role = role
+      const cached = groupMembersCache.get(c.targetId)
+      if (cached) cached.members = liveGroupMembers.value
+      showToast(role === 1 ? `已将 ${member.name} 设为管理员` : `已撤销 ${member.name} 的管理员`, 'success')
+    } catch (e) {
+      showToast(e.message || '设置管理员失败', 'error')
+    }
+  }
+
+  // 禁言/解除禁言（G8，仅群主/管理员）：until unix 毫秒，0=解除；成功即时更新成员禁言状态
+  async function muteMember(member, until) {
+    const c = currentContact.value
+    if (!c || c.type !== 'group' || !member || member.uid == null) return
+    try {
+      await groupApi.muteMember(c.targetId, member.uid, until)
+      member.mutedUntil = Number(until) || 0
+      const cached = groupMembersCache.get(c.targetId)
+      if (cached) cached.members = liveGroupMembers.value
+      showToast(until > 0 ? `已将 ${member.name} 禁言` : `已解除 ${member.name} 的禁言`, 'success')
+    } catch (e) {
+      showToast(e.message || '设置禁言失败', 'error')
+    }
+  }
+
+  // ===== 转让群主（仅群主）：成员选择弹窗 → 确认转让 → 重载群资料（角色即时变化） =====
+  const showTransferModal = ref(false)
+  const transferring = ref(false)
+
+  function openTransferModal() {
+    const c = currentContact.value
+    if (!c || c.type !== 'group' || !isGroupOwner.value) return
+    showTransferModal.value = true
+  }
+
+  async function confirmTransfer(member) {
+    const c = currentContact.value
+    if (!c || c.type !== 'group' || !member || member.uid == null || transferring.value) return
+    transferring.value = true
+    try {
+      await groupApi.transferOwner(c.targetId, member.uid)
+      showTransferModal.value = false
+      showToast(`已将群主转让给 ${member.name}`, 'success')
+      // 失效缓存并重载：我的角色变为普通成员，管理入口即时收回
+      groupMembersCache.delete(c.targetId)
+      await loadLiveGroupMembers()
+    } catch (e) {
+      showToast(e.message || '转让群主失败', 'error')
+    } finally {
+      transferring.value = false
+    }
+  }
+
+  // ===== 我的群内昵称：内联编辑 → 保存后本地即时生效（他人侧由 WS 事件同步） =====
+  const editingMyNickname = ref(false)
+  const myNicknameDraft = ref('')
+  const savingNickname = ref(false)
+
+  function startEditMyNickname() {
+    myNicknameDraft.value = groupInfo.value.myNickname || ''
+    editingMyNickname.value = true
+  }
+
+  async function saveMyNickname() {
+    const c = currentContact.value
+    if (!c || c.type !== 'group' || savingNickname.value) return
+    const nick = myNicknameDraft.value.trim()
+    savingNickname.value = true
+    try {
+      await groupApi.setMyNickname(c.targetId, nick)
+      groupInfo.value = { ...groupInfo.value, myNickname: nick }
+      const cached = groupMembersCache.get(c.targetId)
+      if (cached) cached.info = groupInfo.value
+      editingMyNickname.value = false
+      showToast(nick ? '群昵称已保存' : '群昵称已清除', 'success')
+    } catch (e) {
+      showToast(e.message || '群昵称保存失败', 'error')
+    } finally {
+      savingNickname.value = false
+    }
+  }
 
   // 切换会话时退出群设置编辑态，避免编辑状态串到另一个会话
   watch(activeId, () => {
@@ -245,7 +419,10 @@ export function useGroupPanel(ctx) {
 
   return {
     groupDisplayName, memberSearch, liveGroupMembers, groupMembersCache,
-    groupMeta, filteredMembers, groupInfo, isGroupAdmin,
+    groupMeta, filteredMembers, memberDisplayName, groupInfo, isGroupAdmin, isGroupOwner,
+    canOperateMember, removeMember, setMemberRole, muteMember,
+    showTransferModal, transferring, openTransferModal, confirmTransfer,
+    editingMyNickname, myNicknameDraft, savingNickname, startEditMyNickname, saveMyNickname,
     editingGroupName, groupNameDraft, editingAnnouncement, announcementDraft, savingGroupInfo,
     startEditGroupName, startEditAnnouncement, saveGroupSettings,
     showInviteModal, openInviteModal, onInvited,

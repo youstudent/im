@@ -1,8 +1,8 @@
 {
-  "name": "desktop-client",
-  "version": "1.10.0",
+  "name": "WorkChat",
+  "version": "1.20.0",
   "description": "基于 Electron + Vue 3 + Vite 的桌面应用开发框架",
-  "author": "WorkBuddy",
+  "author": "MyAnswer",
   "license": "MIT",
   "main": "electron/main.js",
   "scripts": {
@@ -44,9 +44,9 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.workbuddy.desktopclient",
+    "appId": "com.MyAnswer.WorkChat",
     "productName": "WorkChat",
-    "copyright": "Copyright © 2026 WorkBuddy",
+    "copyright": "Copyright © 2026 WorkChat",
     "npmRebuild": true,
     "directories": {
       "output": "release"

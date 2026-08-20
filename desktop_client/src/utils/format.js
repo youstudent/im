@@ -1,7 +1,7 @@
 // 消息模块通用常量与纯格式化/分组工具（无 Vue 依赖，可单测）
 
-// 消息类型常量（与后端一致）：1 文本 / 2 图片 / 3 文件 / 4 语音 / 5 视频 / 6 系统
-export const MSG_TYPE = { TEXT: 1, IMAGE: 2, FILE: 3, VOICE: 4, VIDEO: 5, SYSTEM: 6 }
+// 消息类型常量（与后端一致）：1 文本 / 2 图片 / 3 文件 / 4 语音 / 5 视频 / 6 系统 / 7 合并转发
+export const MSG_TYPE = { TEXT: 1, IMAGE: 2, FILE: 3, VOICE: 4, VIDEO: 5, SYSTEM: 6, MERGE: 7 }
 
 // 发送确认超时：30s 内未收到服务端确认（WS 回显/HTTP 响应）即置为发送失败
 export const SEND_TIMEOUT_MS = 30 * 1000

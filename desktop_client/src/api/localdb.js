@@ -56,11 +56,14 @@ export const localdb = {
     async upsert(convs) {
       return unwrap(await invoke('conversations', 'upsert', convs), 0)
     },
-    async bump(convId, lastMsg, lastMsgTime) {
-      return unwrap(await invoke('conversations', 'bump', convId, lastMsg, lastMsgTime), false)
+    async bump(convId, lastMsg, lastMsgTime, senderUid, senderName) {
+      return unwrap(await invoke('conversations', 'bump', convId, lastMsg, lastMsgTime, senderUid, senderName), false)
     },
     async setUnread(convId, unread) {
       return unwrap(await invoke('conversations', 'setUnread', convId, unread), false)
+    },
+    async setMarkedUnread(convId, flag) {
+      return unwrap(await invoke('conversations', 'setMarkedUnread', convId, flag), false)
     },
     async updateSyncSeq(convId, seq) {
       return unwrap(await invoke('conversations', 'updateSyncSeq', convId, seq), false)
@@ -68,6 +71,14 @@ export const localdb = {
     // 敏感会话不落盘：flag=true 时同步清除该会话已落盘消息
     async setNoPersist(convId, flag) {
       return unwrap(await invoke('conversations', 'setNoPersist', convId, flag), false)
+    },
+    // 会话草稿（纯本地，不同步服务端）；空值清除
+    async setDraft(convId, draft) {
+      return unwrap(await invoke('conversations', 'setDraft', convId, draft), false)
+    },
+    // 会话置顶/免打扰（本地即时生效，服务端同步由调用方另行调 HTTP）
+    async setSettings(convId, settings) {
+      return unwrap(await invoke('conversations', 'setSettings', convId, settings), false)
     },
     // 删除会话行（退群清理）
     async remove(convId) {
@@ -88,6 +99,10 @@ export const localdb = {
     // 删除某会话全部消息（退群清理）
     async removeByConv(convId) {
       return unwrap(await invoke('messages', 'removeByConv', convId), 0)
+    },
+    // 批量删除消息（多选删除，仅本地视角）：ids = { serverIds: [], localIds: [] }
+    async deleteMany(convId, ids) {
+      return unwrap(await invoke('messages', 'deleteMany', convId, ids), 0)
     },
     // msgs: 服务端消息结构（需带 server_id/id），按 conv_id + server_id 去重
     async upsert(msgs) {

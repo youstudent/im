@@ -30,8 +30,8 @@ const conversationRepo = {
     const owner = getSessionUid()
     const npSet = noPersistIds(db)
     const stmt = db.prepare(`
-      INSERT INTO conversations (id, owner_uid, type, target_id, last_msg, last_msg_time, unread, last_synced_seq, peer_read_seq, muted, pinned)
-      VALUES (@id, @owner_uid, @type, @target_id, @last_msg, @last_msg_time, @unread, @last_synced_seq, @peer_read_seq, @muted, @pinned)
+      INSERT INTO conversations (id, owner_uid, type, target_id, last_msg, last_msg_time, unread, last_synced_seq, peer_read_seq, muted, pinned, last_sender_uid, last_sender_name)
+      VALUES (@id, @owner_uid, @type, @target_id, @last_msg, @last_msg_time, @unread, @last_synced_seq, @peer_read_seq, @muted, @pinned, @last_sender_uid, @last_sender_name)
       ON CONFLICT(id) DO UPDATE SET
         type = COALESCE(excluded.type, conversations.type),
         target_id = COALESCE(excluded.target_id, conversations.target_id),
@@ -41,7 +41,9 @@ const conversationRepo = {
         last_synced_seq = MAX(conversations.last_synced_seq, excluded.last_synced_seq),
         peer_read_seq = MAX(conversations.peer_read_seq, excluded.peer_read_seq),
         muted = COALESCE(excluded.muted, conversations.muted),
-        pinned = COALESCE(excluded.pinned, conversations.pinned)
+        pinned = COALESCE(excluded.pinned, conversations.pinned),
+        last_sender_uid = COALESCE(excluded.last_sender_uid, conversations.last_sender_uid),
+        last_sender_name = COALESCE(excluded.last_sender_name, conversations.last_sender_name)
     `)
     const tx = db.transaction((rows) => {
       for (const c of rows) stmt.run(c)
@@ -59,6 +61,11 @@ const conversationRepo = {
       peer_read_seq: c.peer_read_seq != null ? Number(c.peer_read_seq) : null,
       muted: c.muted != null ? Number(c.muted) : null,
       pinned: c.pinned != null ? Number(c.pinned) : null,
+      // 最后消息发送者（群聊列表名称前缀用）：缺失传 NULL 保留本地已有值；系统/撤回传 '0'
+      last_sender_uid: c.last_sender_uid != null ? String(c.last_sender_uid) : null,
+      last_sender_name: c.last_sender_name != null ? String(c.last_sender_name) : null,
+      // 注：marked_unread 不参与 upsert（列 NOT NULL，显式 NULL 会违反约束）：
+      // 新行取 DEFAULT 0，状态变更走专用 setMarkedUnread
     }))
     tx(rows)
     return rows.length
@@ -77,8 +84,8 @@ const conversationRepo = {
   },
 
   // 收到新消息：更新摘要/时间，未读 +1（活跃会话由渲染进程随后清零）；
-  // 不落盘会话只更新时间与未读，摘要置空
-  bumpLastMessage(convId, lastMsg, lastMsgTime) {
+  // 不落盘会话只更新时间与未读，摘要置空；senderUid/senderName 记录最后消息发送者（系统/无传 '0'/''）
+  bumpLastMessage(convId, lastMsg, lastMsgTime, senderUid, senderName) {
     const db = getDb()
     if (!db || !convId) return
     const row = db.prepare('SELECT no_persist FROM conversations WHERE id = ?').get(String(convId))
@@ -89,14 +96,27 @@ const conversationRepo = {
       return
     }
     db.prepare(
-      'UPDATE conversations SET last_msg = ?, last_msg_time = ?, unread = unread + 1 WHERE id = ?'
-    ).run(lastMsg ?? '', Number(lastMsgTime) || 0, String(convId))
+      'UPDATE conversations SET last_msg = ?, last_msg_time = ?, unread = unread + 1, last_sender_uid = ?, last_sender_name = ? WHERE id = ?'
+    ).run(
+      lastMsg ?? '',
+      Number(lastMsgTime) || 0,
+      senderUid != null ? String(senderUid) : null,
+      senderName != null ? String(senderName) : null,
+      String(convId)
+    )
   },
 
   setUnread(convId, n) {
     const db = getDb()
     if (!db || !convId) return
     db.prepare('UPDATE conversations SET unread = ? WHERE id = ?').run(Number(n) || 0, String(convId))
+  },
+
+  // 标记未读（纯本地状态）：手动挂起/清除红点，不与服务端同步
+  setMarkedUnread(convId, flag) {
+    const db = getDb()
+    if (!db || !convId) return
+    db.prepare('UPDATE conversations SET marked_unread = ? WHERE id = ?').run(flag ? 1 : 0, String(convId))
   },
 
   updateSyncSeq(convId, seq) {
@@ -106,6 +126,28 @@ const conversationRepo = {
       Number(seq) || 0,
       String(convId)
     )
+  },
+
+  // 设置会话草稿（纯本地；空字符串/空值清除）
+  setDraft(convId, draft) {
+    const db = getDb()
+    if (!db || !convId) return false
+    const text = String(draft ?? '').trim() ? String(draft) : null
+    db.prepare('UPDATE conversations SET draft = ? WHERE id = ?').run(text, String(convId))
+    return true
+  },
+
+  // 设置会话置顶/免打扰（本地即时生效，与服务端 PUT /conversations/:id/settings 同步）
+  setSettings(convId, { pinned, muted } = {}) {
+    const db = getDb()
+    if (!db || !convId) return false
+    if (pinned != null) {
+      db.prepare('UPDATE conversations SET pinned = ? WHERE id = ?').run(Number(pinned) ? 1 : 0, String(convId))
+    }
+    if (muted != null) {
+      db.prepare('UPDATE conversations SET muted = ? WHERE id = ?').run(Number(muted) ? 1 : 0, String(convId))
+    }
+    return true
   },
 
   // 删除会话行（退群清理）；消息由 messageRepo.deleteByConv 单独清除
@@ -319,6 +361,28 @@ const messageRepo = {
     if (!db || !convId) return 0
     const info = db.prepare('DELETE FROM messages WHERE conv_id = ?').run(String(convId))
     return info.changes || 0
+  },
+
+  // 批量删除消息（多选删除，仅本地视角不影响他人）：按 server_id / local_id 集合删除
+  deleteMany(convId, { serverIds = [], localIds = [] } = {}) {
+    const db = getDb()
+    if (!db || !convId) return 0
+    let n = 0
+    if (serverIds.length) {
+      const ph = serverIds.map(() => '?').join(',')
+      const info = db
+        .prepare(`DELETE FROM messages WHERE conv_id = ? AND server_id IN (${ph})`)
+        .run(String(convId), ...serverIds.map(String))
+      n += info.changes || 0
+    }
+    if (localIds.length) {
+      const ph = localIds.map(() => '?').join(',')
+      const info = db
+        .prepare(`DELETE FROM messages WHERE conv_id = ? AND local_id IN (${ph})`)
+        .run(String(convId), ...localIds.map(Number))
+      n += info.changes || 0
+    }
+    return n
   },
 }
 

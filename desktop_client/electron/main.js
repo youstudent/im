@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog, safeStorage, protocol, Notification, shell, net, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, Menu, dialog, safeStorage, protocol, Notification, shell, net, nativeImage, clipboard } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
@@ -52,6 +52,18 @@ ipcMain.handle('storage:is-encryption-available', () => {
     return safeStorage.isEncryptionAvailable()
   } catch {
     return false
+  }
+})
+
+// ---- 剪贴板截图读取：粘贴发送图片时兼底渲染进程 paste 事件取不到的场景 ----
+// 返回 PNG dataURL；无图片返回空串（渲染进程据此降级为普通文本粘贴）
+ipcMain.handle('clipboard:read-image', () => {
+  try {
+    const img = clipboard.readImage()
+    if (!img || img.isEmpty()) return ''
+    return img.toDataURL()
+  } catch {
+    return ''
   }
 })
 
@@ -115,27 +127,39 @@ function badgeText(count) {
 }
 
 // 绘制未读角标：纯像素绘制红底白字胶囊 PNG（主进程无 canvas，nativeImage 也不解 SVG，见 badge.js）
-const { renderBadgePNG } = require('./badge')
+// L7 托盘灰点：免打扰会话只有未读时渲染灰点（dot=true）而非数字
+const { renderBadgePNG, renderDotPNG } = require('./badge')
 function makeBadgeImage(text) {
   const png = renderBadgePNG(text)
   if (!png) return null
   return nativeImage.createFromBuffer(png)
 }
+function makeDotImage() {
+  const png = renderDotPNG()
+  if (!png) return null
+  return nativeImage.createFromBuffer(png)
+}
 
-// 设置未读角标：count=0 清除；同值不重复设置（渲染进程会话切换会频繁触发）
+// 设置未读角标：arg = { count, dot? }；count=0 且非 dot 时清除；同值不重复设置（渲染进程会话切换会频繁触发）
+// dot=true：渲染灰点（免打扰未读）；count>0：渲染红色数字
 ipcMain.handle('app:badge:set', (_event, arg) => {
   try {
     const count = Math.max(0, Number(arg && arg.count) || 0)
-    if (count === lastBadgeCount) return { ok: true }
-    lastBadgeCount = count
-    const text = badgeText(count)
+    const dot = !!(arg && arg.dot)
+    const key = dot ? 'dot' : String(count)
+    if (key === lastBadgeCount) return { ok: true }
+    lastBadgeCount = key
     if (process.platform === 'darwin' && app.dock) {
-      app.dock.setBadge(text)
+      // macOS 不支持灰点覆盖图标，dot 时使用空串徽章（不显示数字）
+      app.dock.setBadge(dot ? '' : badgeText(count))
     }
     const win = mainWindow
     if (win && process.platform === 'win32') {
-      if (count > 0) {
-        const icon = makeBadgeImage(text)
+      if (dot) {
+        const icon = makeDotImage()
+        if (icon) win.setOverlayIcon(icon, '有未读消息')
+      } else if (count > 0) {
+        const icon = makeBadgeImage(badgeText(count))
         if (icon) win.setOverlayIcon(icon, `${count} 条未读消息`)
       } else {
         win.setOverlayIcon(null, '')

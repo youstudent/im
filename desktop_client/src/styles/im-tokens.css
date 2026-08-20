@@ -34,6 +34,9 @@ html {
   --im-bg-app: #f2f2f5;
   --im-surface: #ffffff;
   --im-surface-2: #f7f7fa;
+  /* 置顶会话背景：比 surface-2 略深一档，与普通区形成层次 */
+  --im-pinned: #eef0f4;
+  --im-pinned-hover: #e7e9ef;
 
   /* 边框与分隔线 */
   --im-border: #e6e8eb;
@@ -139,6 +142,9 @@ html {
   --im-bg-app: #1a1a1f;
   --im-surface: #242429;
   --im-surface-2: #2c2c33;
+  /* 置顶会话背景：深色模式下略亮一档以区分普通区 */
+  --im-pinned: #32323a;
+  --im-pinned-hover: #3a3a43;
 
   /* 边框与分隔线 */
   --im-border: #38383f;

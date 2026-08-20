@@ -21,10 +21,12 @@ type Conversation struct {
 	UnreadCount   int64   // 未读消息数（发消息累加，已读清零，撤回递减）
 	Muted       int8      // 免打扰
 	Pinned      int8      // 置顶
+	LastSenderUID  int64  // 最后消息发送者 uid（0 表示系统/无，群聊列表前缀用）
+	LastSenderName string // 最后消息发送者昵称快照
 	CreatedAt   time.Time
 }
 
-const convCols = `id, type, owner_uid, target_id, COALESCE(last_msg_id,0) AS last_msg_id, COALESCE(last_msg_text,'') AS last_msg_text, last_msg_time, last_synced_seq, unread_count, muted, pinned, created_at`
+const convCols = `id, type, owner_uid, target_id, COALESCE(last_msg_id,0) AS last_msg_id, COALESCE(last_msg_text,'') AS last_msg_text, last_msg_time, last_synced_seq, unread_count, muted, pinned, COALESCE(last_sender_uid,0) AS last_sender_uid, COALESCE(last_sender_name,'') AS last_sender_name, created_at`
 
 // GetOrCreateConversation 获取或创建会话视图。
 // newID 为新建会话时使用的内部主键（雪花 ID，由调用方生成）。
@@ -166,10 +168,11 @@ func (d *DB) ListConversationsChangedSince(ownerUID int64, since time.Time) ([]*
 	return list, rows.Err()
 }
 
-// UpdateConversationLastMsg 更新会话最后消息信息。
-func (d *DB) UpdateConversationLastMsg(ownerUID, targetID int64, lastMsgID int64, text string, t time.Time) error {
-	_, err := d.Exec(`UPDATE conversations SET last_msg_id = ?, last_msg_text = ?, last_msg_time = ? WHERE owner_uid = ? AND target_id = ?`,
-		lastMsgID, text, t, ownerUID, targetID)
+// UpdateConversationLastMsg 更新会话最后消息信息；senderUID/senderName 记录发送者
+//（单聊列表不拼前缀但保持字段准确；系统消息/撤回传 0/空）。
+func (d *DB) UpdateConversationLastMsg(ownerUID, targetID int64, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error {
+	_, err := d.Exec(`UPDATE conversations SET last_msg_id = ?, last_msg_text = ?, last_msg_time = ?, last_sender_uid = ?, last_sender_name = ? WHERE owner_uid = ? AND target_id = ?`,
+		lastMsgID, text, t, senderUID, senderName, ownerUID, targetID)
 	return err
 }
 
@@ -179,10 +182,37 @@ func (d *DB) DeleteGroupConversationView(ownerUID, gUID int64) error {
 	return err
 }
 
+// DeleteConversationByID 删除用户自己的会话视图行（用户主动删除会话；仅删视图不删消息，
+// 再次收发消息时 GetOrCreateConversation 自动重建）。
+func (d *DB) DeleteConversationByID(ownerUID, convID int64) error {
+	_, err := d.Exec(`DELETE FROM conversations WHERE owner_uid = ? AND id = ?`, ownerUID, convID)
+	return err
+}
+
 // DeleteAllGroupConversationViews 删除某群的全体成员会话视图（管理端解散群清理，
 // 避免成员会话列表残留幽灵群会话）。
 func (d *DB) DeleteAllGroupConversationViews(gUID int64) error {
 	_, err := d.Exec(`DELETE FROM conversations WHERE target_id = ? AND type = 2`, gUID)
+	return err
+}
+
+// UpdateConversationSettings 更新会话置顶/免打扰（仅归属者本人视图；nil 字段不更新）。
+func (d *DB) UpdateConversationSettings(ownerUID, convID int64, pinned, muted *int8) error {
+	var sets []string
+	var args []interface{}
+	if pinned != nil {
+		sets = append(sets, "pinned = ?")
+		args = append(args, *pinned)
+	}
+	if muted != nil {
+		sets = append(sets, "muted = ?")
+		args = append(args, *muted)
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	args = append(args, convID, ownerUID)
+	_, err := d.Exec(`UPDATE conversations SET `+strings.Join(sets, ", ")+` WHERE id = ? AND owner_uid = ?`, args...)
 	return err
 }
 
@@ -216,9 +246,10 @@ func (d *DB) EnsureGroupConversationViews(convID, gUID int64, memberUIDs []int64
 }
 
 // UpdateGroupConversationsLastMsg 批量更新群全部成员视图的最后消息（单条 SQL）。
-func (d *DB) UpdateGroupConversationsLastMsg(gUID, lastMsgID int64, text string, t time.Time) error {
-	_, err := d.Exec(`UPDATE conversations SET last_msg_id = ?, last_msg_text = ?, last_msg_time = ?
-		WHERE type = 2 AND target_id = ?`, lastMsgID, text, t, gUID)
+// senderUID/senderName 记录最后消息发送者（系统消息传 0/空），客户端列表据此拼 "发送者: 内容" 前缀。
+func (d *DB) UpdateGroupConversationsLastMsg(gUID, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error {
+	_, err := d.Exec(`UPDATE conversations SET last_msg_id = ?, last_msg_text = ?, last_msg_time = ?, last_sender_uid = ?, last_sender_name = ?
+		WHERE type = 2 AND target_id = ?`, lastMsgID, text, t, senderUID, senderName, gUID)
 	return err
 }
 
@@ -232,9 +263,10 @@ func (d *DB) UpdateGroupConversationsSyncedSeq(gUID, seq, excludeUID int64) erro
 
 // UpdateGroupConversationsLastMsgExcept 批量更新群成员视图的最后消息，排除指定用户（单条 SQL）。
 // 撤回场景：发送方视图与其余成员视图需展示不同文案，故拆两条 SQL（发送方用 UpdateConversationLastMsg）。
-func (d *DB) UpdateGroupConversationsLastMsgExcept(gUID, excludeUID, lastMsgID int64, text string, t time.Time) error {
-	_, err := d.Exec(`UPDATE conversations SET last_msg_id = ?, last_msg_text = ?, last_msg_time = ?
-		WHERE type = 2 AND target_id = ? AND owner_uid != ?`, lastMsgID, text, t, gUID, excludeUID)
+// senderUID/senderName 同 UpdateGroupConversationsLastMsg（撤回文案无发送者语义，传 0/空避免列表加前缀）。
+func (d *DB) UpdateGroupConversationsLastMsgExcept(gUID, excludeUID, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error {
+	_, err := d.Exec(`UPDATE conversations SET last_msg_id = ?, last_msg_text = ?, last_msg_time = ?, last_sender_uid = ?, last_sender_name = ?
+		WHERE type = 2 AND target_id = ? AND owner_uid != ?`, lastMsgID, text, t, senderUID, senderName, gUID, excludeUID)
 	return err
 }
 
@@ -257,7 +289,8 @@ func (d *DB) BumpGroupConversationsUnread(gUID, excludeUID, delta int64) error {
 func scanConv(row interface{ Scan(...interface{}) error }) (*Conversation, error) {
 	var c Conversation
 	err := row.Scan(&c.ID, &c.Type, &c.OwnerUID, &c.TargetID, &c.LastMsgID, &c.LastMsgText,
-		&c.LastMsgTime, &c.LastSyncedSeq, &c.UnreadCount, &c.Muted, &c.Pinned, &c.CreatedAt)
+		&c.LastMsgTime, &c.LastSyncedSeq, &c.UnreadCount, &c.Muted, &c.Pinned,
+		&c.LastSenderUID, &c.LastSenderName, &c.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound

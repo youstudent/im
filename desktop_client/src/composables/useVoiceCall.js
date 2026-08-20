@@ -106,8 +106,12 @@ export function useVoiceCall(ctx) {
     }
     conv.messages = conv.messages ?? []
     conv.messages.push(msg)
-    // 会话列表摘要统一 [语音通话]（messagePreview 识别 extra.call）
+    // 会话列表摘要统一 [语音通话]（messagePreview 识别 extra.call）；
+    // 发送者置 0：通话记录无发送者语义，群聊列表不加名称前缀
     conv.lastMessage = '[语音通话]'
+    conv.lastSenderUid = 0
+    conv.lastSenderName = ''
+    conv.lastMentionMe = false
     conv.lastMsgTime = createdAt
     conv.time = formatConvTime(createdAt)
     if (String(activeId.value) === String(conv.id)) scrollToBottom()
@@ -129,7 +133,7 @@ export function useVoiceCall(ctx) {
           created_at: createdAt,
         },
       ])
-      localdb.conversations.bump(String(realConvId), '[语音通话]', createdAt)
+      localdb.conversations.bump(String(realConvId), '[语音通话]', createdAt, '0', '')
     }
   }
 

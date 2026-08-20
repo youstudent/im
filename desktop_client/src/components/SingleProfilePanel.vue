@@ -15,7 +15,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-  'update:muteDnd', 'send-message', 'open-search', 'toggle-no-persist', 'save-remark',
+  'update:muteDnd', 'send-message', 'open-search', 'toggle-no-persist', 'save-remark', 'start-voice-call',
 ])
 
 // 备注编辑为面板局部状态：切换会话时由父组件 :key 重挂载自动复位
@@ -51,7 +51,7 @@ async function saveRemark() {
     <button class="btn-primary" @click="emit('send-message')">
       <span>发消息</span>
     </button>
-    <button class="btn-outline">
+    <button class="btn-outline" @click="emit('start-voice-call')">
       <span>语音通话</span>
     </button>
   </div>
@@ -96,6 +96,8 @@ async function saveRemark() {
       <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
   </div>
+
+  <!-- 图片与文件（S8）：已取消展示 -->
   <div class="info-row">
     <span class="info-value">消息免打扰</span>
     <button class="toggle" :class="{ on: muteDnd }" @click="emit('update:muteDnd', !muteDnd)">

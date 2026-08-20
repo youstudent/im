@@ -45,6 +45,8 @@ type MessageHandler interface {
 	HandleRead(uid int64, body json.RawMessage) (*Frame, []int64, error)
 	// HandleAck 处理送达回执，返回需要转发给消息发送方的 ack 帧（可为 nil）。
 	HandleAck(uid int64, body json.RawMessage) (*Frame, []int64, error)
+	// HandleTyping 处理正在输入帧（S7）：返回需要转发该帧的接收方 uid 列表（仅单聊对端；群聊不广播）。
+	HandleTyping(uid int64, body json.RawMessage) ([]int64, error)
 }
 
 // NewServer 创建网关服务。rdb 为 im 封装的 Redis 客户端。
@@ -204,8 +206,21 @@ func (cl *client) handle(f *Frame) {
 		cl.handleRead(f)
 	case FrameCall:
 		cl.handleCall(f)
+	case FrameTyping:
+		// 正在输入（S7）：纯转发不落库——原样转发给对端（单聊），离线/群聊不处理
+		if cl.srv.handler != nil {
+			toUIDs, err := cl.srv.handler.HandleTyping(cl.uid, rawBody(f))
+			if err == nil {
+				for _, uid := range toUIDs {
+					if uid == cl.uid {
+						continue
+					}
+					cl.srv.hub.Push(uid, NewFrame(FrameTyping, 0, f.Body))
+				}
+			}
+		}
 	default:
-		// typing 等暂不处理
+		// 其余帧（如 typing 推送）直接忽略
 	}
 }
 

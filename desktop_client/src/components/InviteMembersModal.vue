@@ -51,16 +51,26 @@ function toggleInvite(uid) {
 }
 
 // 确认邀请：成功后通知父组件刷新群成员
+// G7 入群确认：群开启 invite_confirm 时后端返回提示（不直接入群），本地展示"已通知群主/管理员"
 const inviting = ref(false)
+const inviteMsg = ref('') // 邀请结果提示（成功/待确认/失败）
 async function confirmInvite() {
   const uids = [...selectedInviteUIDs.value]
   if (!props.targetId || uids.length === 0 || inviting.value) return
   inviting.value = true
+  inviteMsg.value = ''
   try {
     await groupApi.invite(props.targetId, uids)
     emit('invited')
   } catch (e) {
-    console.warn('[InviteMembersModal] 邀请失败:', e?.message || e)
+    const msg = e?.message || '邀请失败'
+    // 入群确认开启：邀请已转交群主/管理员，弹框保留并展示待确认提示
+    if (msg.includes('入群确认')) {
+      inviteMsg.value = msg
+      selectedInviteUIDs.value = new Set() // 清空勾选，避免重复提交
+    } else {
+      inviteMsg.value = msg
+    }
   } finally {
     inviting.value = false
   }
@@ -90,6 +100,7 @@ async function confirmInvite() {
         </div>
 
         <div class="invite-hint">已选 {{ selectedInviteUIDs.size }} 位好友（已加入群的好友不显示）</div>
+        <div v-if="inviteMsg" class="invite-msg">{{ inviteMsg }}</div>
 
         <div v-if="filteredInviteFriends.length === 0" class="invite-empty">
           <p>暂无可邀请的好友</p>
@@ -156,6 +167,15 @@ async function confirmInvite() {
 .invite-hint {
   font-size: 0.786rem;
   color: var(--im-text-muted);
+}
+
+.invite-msg {
+  font-size: 0.786rem;
+  color: var(--im-primary);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 18px;
 }
 
 .invite-empty {

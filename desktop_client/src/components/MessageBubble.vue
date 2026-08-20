@@ -1,6 +1,7 @@
 <script setup>
 // 消息气泡内容：文本/图片/语音/视频/文件（收/发两侧共用，消除重复模板）
-import { isAudioMsg, isVideoMsg } from '../utils/message'
+import { computed } from 'vue'
+import { isAudioMsg, isVideoMsg, msgTypeLabel } from '../utils/message'
 import { formatFileSize } from '../utils/format'
 
 const props = defineProps({
@@ -9,19 +10,96 @@ const props = defineProps({
   side: { type: String, default: 'in' },
   // 语音播放器能力（useVoicePlayer 返回值）：播放状态/时长/宽度/未读红点
   voice: { type: Object, default: null },
+  // 引用发送者名称解析（可选）：(uid, fallback) => 展示名，使备注变更后引用名同步刷新
+  resolveName: { type: Function, default: null },
+  // S6 表情回应（已聚合）：[{ emoji, count, mine }]，父组件按消息渲染时传入
+  reactions: { type: Array, default: () => [] },
+  // 是否可添加表情回应（会话成员均可；消息未撤回时父组件保证）
+  canReact: { type: Boolean, default: true },
+  // G14 群已读人数：showReadCount=true 且 readCount>0 时气泡下方显示 "N 人已读"
+  showReadCount: { type: Boolean, default: false },
+  readCount: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['menu', 'image-loaded', 'open-image', 'open-video', 'open-file', 'video-error'])
+const emit = defineEmits(['menu', 'image-loaded', 'open-image', 'open-video', 'open-file', 'video-error', 'quote-jump', 'open-merge', 'react'])
+
+// S6 快捷表情栏：hover 气泡时浮现（微信风格：点赞/爱心/大笑/惊讶/哭/生气）
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '😡']
+
+// 文本分段：携带 mention_uids 时把 @xxx 片段高亮（蓝色），其余原样保留换行
+const textSegments = computed(() => {
+  const text = props.msg.text || ''
+  const mentions = props.msg.extra && props.msg.extra.mention_uids
+  if (!Array.isArray(mentions) || !mentions.length || !text) return null
+  const segs = []
+  const re = /@[^\s@]+/g
+  let last = 0
+  let m
+  while ((m = re.exec(text))) {
+    if (m.index > last) segs.push({ t: text.slice(last, m.index) })
+    segs.push({ t: m[0], hl: true })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) segs.push({ t: text.slice(last) })
+  return segs
+})
+
+// 引用块摘要：非文本被引消息展示类型占位；被引消息已撤回时降级提示（发送时快照，不实时查原文）
+const quoteSummary = computed(() => {
+  const q = props.msg.extra && props.msg.extra.quote
+  if (!q) return ''
+  const t = Number(q.type) || 1
+  if (t !== 1) return msgTypeLabel(t)
+  const c = String(q.content || '')
+  return c.length > 60 ? c.slice(0, 60) + '…' : c
+})
+
+// 引用发送者展示名：优先走外部解析（好友备注优先，备注变更时响应式刷新），
+// 无解析器时回落发送时快照名
+const quoteSenderName = computed(() => {
+  const q = props.msg.extra && props.msg.extra.quote
+  if (!q) return ''
+  if (props.resolveName) {
+    const n = props.resolveName(q.sender_uid, q.sender_name)
+    if (n) return n
+  }
+  return q.sender_name || '对方'
+})
+
+// 被引消息是否已失效（撤回）：原文快照仍在，但展示降级提示（删除场景本地无行同理处理）
+const quoteInvalid = computed(() => {
+  const q = props.msg.extra && props.msg.extra.quote
+  return !!q && Number(q.status) === 1
+})
+
+// 合并转发数据（S2，type=7）：content 为 JSON { count, items:[{sender_name, type, content}] }；
+// 解析失败降级为空列表（旧数据/脏数据不阻断渲染）
+const mergeData = computed(() => {
+  try {
+    const d = JSON.parse(props.msg.text || '{}')
+    return {
+      count: Number(d.count) || (Array.isArray(d.items) ? d.items.length : 0),
+      items: Array.isArray(d.items) ? d.items : [],
+    }
+  } catch {
+    return { count: 0, items: [] }
+  }
+})
 </script>
 
 <template>
   <div
     class="bubble"
-    :class="[side, { 'bubble-media': (msg.msgType === 2 || msg.msgType === 3) && !isAudioMsg(msg) }]"
+    :class="[side, { 'bubble-media': (msg.msgType === 2 || msg.msgType === 3) && !isAudioMsg(msg), 'has-quote': !!(msg.extra && msg.extra.quote) }]"
     @click="emit('menu', $event, msg)"
   >
-    <!-- 文本消息 -->
-    <template v-if="msg.msgType === 1 || !msg.msgType">{{ msg.text }}</template>
+    <!-- 正文容器：带引用时纵向排列（正文在上，引用独立气泡在下） -->
+    <div class="bubble-body">
+    <!-- 文本消息：带 @提及时分段高亮 -->
+    <template v-if="msg.msgType === 1 || !msg.msgType">
+      <template v-if="textSegments"><template v-for="(seg, si) in textSegments" :key="si"><span v-if="seg.hl" class="mention-hl">{{ seg.t }}</span><template v-else>{{ seg.t }}</template></template></template>
+      <template v-else>{{ msg.text }}</template>
+    </template>
     <!-- 图片消息：本体 + 上传中旋转遮罩（微信风格，仅未发送完成时显示） -->
     <template v-else-if="msg.msgType === 2">
       <div class="msg-image-wrap">
@@ -84,6 +162,54 @@ const emit = defineEmits(['menu', 'image-loaded', 'open-image', 'open-video', 'o
         <span v-if="msg.isUploading" class="spinner media-spinner file-spinner"></span>
       </div>
     </template>
+    <!-- 合并转发消息（S2）：卡片展示前几条摘要，点击打开完整列表弹层 -->
+    <template v-else-if="msg.msgType === 7">
+      <div class="msg-merge" role="button" title="点击查看合并转发的消息" @click.stop="emit('open-merge', mergeData)">
+        <div class="merge-title">合并转发的消息</div>
+        <div v-for="(it, ii) in mergeData.items.slice(0, 3)" :key="ii" class="merge-line">{{ it.sender_name }}：{{ it.content }}</div>
+        <div class="merge-footer">共 {{ mergeData.count }} 条</div>
+      </div>
+    </template>
+    </div>
+    <!-- 引用块：独立灰色气泡置于正文气泡下方，点击定位被引消息；
+         被引消息已撤回时降级提示 -->
+    <div v-if="msg.extra && msg.extra.quote" class="quote-block" @click.stop="emit('quote-jump', msg.extra.quote)">
+      <template v-if="quoteInvalid"><span class="quote-line">引用内容不存在</span></template>
+      <template v-else>
+        <span class="quote-line">{{ quoteSenderName }}：{{ quoteSummary }}</span>
+      </template>
+    </div>
+
+    <!-- S6 表情回应：已添加的反应横排展示（点击自己的反应可取消）；hover 快捷表情栏 -->
+    <div v-if="reactions.length" class="reaction-row" @click.stop>
+      <button
+        v-for="r in reactions"
+        :key="r.emoji"
+        class="reaction-chip"
+        :class="{ mine: r.mine }"
+        :title="`${r.count} 人回应`"
+        @click.stop="emit('react', { emoji: r.emoji, add: !r.mine })"
+      >
+        <span class="reaction-emoji">{{ r.emoji }}</span>
+        <span class="reaction-count">{{ r.count }}</span>
+      </button>
+    </div>
+
+    <!-- G14 已读人数：仅群主/管理员视角展示 -->
+    <span v-if="showReadCount && readCount > 0" class="read-count" @click.stop>已读 {{ readCount }} 人</span>
+
+    <!-- S6 快捷表情栏：hover 气泡浮现（不可撤回消息不展示） -->
+    <div v-if="canReact && msg.status !== 1" class="quick-reaction" @click.stop>
+      <button
+        v-for="e in QUICK_EMOJIS"
+        :key="e"
+        class="quick-reaction-btn"
+        :title="`回应 ${e}`"
+        @click.stop="emit('react', { emoji: e, add: true })"
+      >
+        {{ e }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -91,6 +217,7 @@ const emit = defineEmits(['menu', 'image-loaded', 'open-image', 'open-video', 'o
 /* 气泡基础样式：根元素同时携带父组件作用域属性，父级 .message-row 相关规则仍可命中 */
 .bubble {
   /* 按文本自然撑开，避免父容器把气泡压缩到最小宽度 */
+  position: relative; /* S6 快捷表情栏定位锚点 */
   width: fit-content;
   min-width: 2.5em;
   padding: 12px 14px;
@@ -338,5 +465,226 @@ const emit = defineEmits(['menu', 'image-loaded', 'open-image', 'open-video', 'o
 .file-spinner {
   flex-shrink: 0;
   margin-left: 4px;
+}
+
+/* ===== 引用回复：正文与引用使用独立气泡纵向排列（正文在上，引用灰色
+   独立气泡在下），点击引用定位原文 ===== */
+.bubble.has-quote {
+  display: flex;
+  flex-direction: column;
+  /* 不拉伸子块：正文/引用气泡宽度各自跟随自身内容 */
+  align-items: flex-start;
+  /* 外层仅做容器，背景/阴影/内边距下放至正文气泡与引用气泡 */
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* 发送侧靠右对齐：正文与引用气泡右边缘对齐 */
+.bubble.has-quote.out {
+  align-items: flex-end;
+}
+
+/* 带引用的正文独立气泡：继承基础气泡配色 */
+.bubble.has-quote .bubble-body {
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.bubble.has-quote.in .bubble-body {
+  background: var(--im-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.bubble.has-quote.out .bubble-body {
+  background: #b2f0c5;
+  box-shadow: 0 2px 6px rgba(46, 160, 82, 0.15);
+}
+
+/* 媒体消息（图片/视频/文件）本体无气泡背景，卡片自带样式 */
+.bubble.bubble-media.has-quote .bubble-body {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.bubble-body {
+  min-width: 0;
+}
+
+/* 引用独立气泡：浅灰底圆角卡片，宽度跟随引用文字，超宽时省略号截断 */
+.quote-block {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.045);
+  cursor: pointer;
+  user-select: none;
+  max-width: 100%;
+}
+
+.quote-block:hover .quote-line {
+  opacity: 0.7;
+}
+
+.quote-line {
+  display: block;
+  font-size: 0.857rem;
+  line-height: 1.5;
+  color: rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 发送侧正文气泡上引用文字保持深灰，可读性一致 */
+.bubble.out .quote-line {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+:global([data-theme='dark']) .quote-block {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:global([data-theme='dark']) .quote-line,
+:global([data-theme='dark']) .bubble.out .quote-line {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* @提及高亮：品牌蓝 */
+.mention-hl {
+  color: var(--im-primary);
+}
+
+/* ===== S6 表情回应 ===== */
+.reaction-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  max-width: 260px;
+}
+
+.reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border: 1px solid var(--im-border);
+  border-radius: 999px;
+  background: var(--im-surface);
+  font-family: inherit;
+  font-size: 0.857rem;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.reaction-chip.mine {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.4);
+}
+
+.reaction-chip:hover {
+  background: var(--im-surface-2);
+}
+
+.reaction-count {
+  color: var(--im-text-secondary);
+  font-size: 0.786rem;
+}
+
+/* G14 已读人数：气泡下方小字（仅群主/管理员视角） */
+.read-count {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.714rem;
+  color: var(--im-text-muted);
+  text-align: right;
+}
+
+/* S6 快捷表情栏：hover 气泡时右上角浮现 */
+.quick-reaction {
+  position: absolute;
+  top: -30px;
+  right: 0;
+  display: flex;
+  gap: 2px;
+  padding: 3px 6px;
+  background: var(--im-surface);
+  border: 1px solid var(--im-border);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(2px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+  z-index: 20;
+}
+
+.bubble:hover .quick-reaction {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.quick-reaction-btn {
+  border: none;
+  background: none;
+  font-size: 1.071rem;
+  line-height: 1;
+  padding: 3px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+.quick-reaction-btn:hover {
+  transform: scale(1.25);
+  background: var(--im-surface-2);
+}
+
+:global([data-theme='dark']) .quick-reaction {
+  background: var(--im-surface-2);
+  border-color: var(--im-border);
+}
+
+/* ===== 合并转发卡片（S2）：标题 + 最多三条摘要 + 条数页脚，点击查看详情 ===== */
+.msg-merge {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 220px;
+  max-width: 100%;
+  cursor: pointer;
+}
+
+.merge-title {
+  font-size: 0.929rem;
+}
+
+.merge-line {
+  font-size: 0.857rem;
+  color: var(--im-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bubble.out .merge-line {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.merge-footer {
+  font-size: 0.786rem;
+  color: var(--im-text-muted);
+  border-top: 1px solid var(--im-border);
+  padding-top: 4px;
+  margin-top: 2px;
+}
+
+.bubble.out .merge-footer {
+  color: rgba(0, 0, 0, 0.45);
+  border-top-color: rgba(0, 0, 0, 0.12);
 }
 </style>

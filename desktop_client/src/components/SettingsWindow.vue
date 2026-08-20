@@ -178,7 +178,18 @@ watch(
 )
 
 const autoStart = ref(true)
+// “使用 Enter 发送”开关：持久化到 localStorage，主窗口回车时实时读取（关闭后 Enter 换行、Ctrl+Enter 发送）
+const SEND_ENTER_KEY = 'workchat:send-with-enter'
 const sendWithEnter = ref(true)
+try {
+  sendWithEnter.value = localStorage.getItem(SEND_ENTER_KEY) !== '0'
+} catch {}
+function toggleSendWithEnter() {
+  sendWithEnter.value = !sendWithEnter.value
+  try {
+    localStorage.setItem(SEND_ENTER_KEY, sendWithEnter.value ? '1' : '0')
+  } catch {}
+}
 
 // 通知设置状态（持久化到 localStorage，消息提醒链路实时读取）
 const desktopNotify = ref(notifySettings.desktopEnabled())
@@ -749,7 +760,7 @@ async function downloadUpdate() {
                   <div class="label-title">发送消息</div>
                   <div class="label-sub">使用 Enter 发送，Shift+Enter 换行</div>
                 </div>
-                <button class="toggle" :class="{ on: sendWithEnter }" @click="sendWithEnter = !sendWithEnter">
+                <button class="toggle" :class="{ on: sendWithEnter }" @click="toggleSendWithEnter()">
                   <span class="toggle-dot"></span>
                 </button>
               </div>

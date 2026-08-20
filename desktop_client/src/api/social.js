@@ -145,6 +145,54 @@ export const groupApi = {
     clearCache()
     return r
   },
+  // 移除群成员（群主/管理员；管理员仅可移除普通成员，后端鉴权）
+  async kick(gUid, uid) {
+    const r = await http.post(`/groups/${gUid}/members/${uid}/kick`)
+    clearCache()
+    return r
+  },
+  // 设为/取消管理员（仅群主）：role 1 管理员 / 2 普通成员
+  async setRole(gUid, uid, role) {
+    const r = await http.put(`/groups/${gUid}/members/${uid}/role`, { role })
+    clearCache()
+    return r
+  },
+  // 转让群主（仅现任群主）：newOwnerUid 新群主 uid
+  async transferOwner(gUid, newOwnerUid) {
+    const r = await http.put(`/groups/${gUid}/owner`, { new_owner_uid: Number(newOwnerUid) })
+    clearCache()
+    return r
+  },
+  // 设置我的群内昵称（任何成员）；空字符串清除回落用户昵称
+  async setMyNickname(gUid, nickname) {
+    const r = await http.put(`/groups/${gUid}/members/me/nickname`, { nickname })
+    clearCache()
+    return r
+  },
+  // 更新群设置开关（仅群主/管理员，后端鉴权）：settings = { invite_confirm?: 0|1, mute_all?: 0|1 }，未传字段保持不变
+  async updateSettings(gUid, settings) {
+    const r = await http.put(`/groups/${gUid}/settings`, settings)
+    clearCache()
+    return r
+  },
+  // 处理入群确认（G7，仅群主/管理员）：inviteeUid 被邀请人，accept 是否同意入群
+  async decideInvite(gUid, inviteeUid, accept) {
+    const r = await http.post(`/groups/${gUid}/invites/decide`, { invitee_uid: Number(inviteeUid), accept })
+    clearCache()
+    return r
+  },
+  // 设置/解除成员禁言（G8，仅群主/管理员）：until unix 毫秒，0 解除
+  async muteMember(gUid, uid, until) {
+    const r = await http.put(`/groups/${gUid}/members/${uid}/mute`, { until: Number(until) || 0 })
+    clearCache()
+    return r
+  },
+  // 更新我"保存到通讯录"开关（G10，任何成员）：saved 0 关闭 / 1 开启
+  async setSaved(gUid, saved) {
+    const r = await http.put(`/groups/${gUid}/saved`, { saved: saved ? 1 : 0 })
+    clearCache()
+    return r
+  },
 }
 
 export const notifyApi = {

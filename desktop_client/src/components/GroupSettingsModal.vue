@@ -1,5 +1,6 @@
 <script setup>
 // 群设置弹窗：群名/群公告（管理员可编辑，普通成员只读）
+// 第三期（P2）：入群确认（G7）/全员禁言（G8）仅群主/管理员可编辑；保存到通讯录（G10）任何成员可编辑
 import { ref } from 'vue'
 import { groupApi } from '../api/social'
 
@@ -10,12 +11,19 @@ const props = defineProps({
   initialAnnouncement: { type: String, default: '' },
   // 群主或管理员才可编辑，普通成员只读
   isAdmin: { type: Boolean, default: false },
+  // G7 入群确认 / G8 全员禁言 / G10 保存到通讯录（0/1）
+  initialInviteConfirm: { type: Number, default: 0 },
+  initialMuteAll: { type: Number, default: 0 },
+  initialSaved: { type: Number, default: 1 },
 })
 
 const emit = defineEmits(['close', 'saved', 'failed'])
 
 const gsName = ref(props.initialName)
 const gsAnnouncement = ref(props.initialAnnouncement)
+const gsInviteConfirm = ref(props.initialInviteConfirm === 1)
+const gsMuteAll = ref(props.initialMuteAll === 1)
+const gsSaved = ref(props.initialSaved !== 0)
 const gsSaving = ref(false)
 
 async function save() {
@@ -28,8 +36,26 @@ async function save() {
   }
   gsSaving.value = true
   try {
-    await groupApi.update(props.groupUid, name, announcement)
-    emit('saved', { name, announcement })
+    // 群名/公告（管理员）：走 update 接口
+    if (props.isAdmin) {
+      await groupApi.update(props.groupUid, name, announcement)
+    }
+    // 入群确认 / 全员禁言（管理员）：走 settings 接口
+    if (props.isAdmin) {
+      await groupApi.updateSettings(props.groupUid, {
+        invite_confirm: gsInviteConfirm.value ? 1 : 0,
+        mute_all: gsMuteAll.value ? 1 : 0,
+      })
+    }
+    // 保存到通讯录（任何成员）：走 saved 接口
+    await groupApi.setSaved(props.groupUid, gsSaved.value)
+    emit('saved', {
+      name,
+      announcement,
+      inviteConfirm: gsInviteConfirm.value ? 1 : 0,
+      muteAll: gsMuteAll.value ? 1 : 0,
+      saved: gsSaved.value ? 1 : 0,
+    })
   } catch (e) {
     emit('failed', e.message || '群设置保存失败')
   } finally {
@@ -74,12 +100,63 @@ async function save() {
           ></textarea>
           <div v-else class="gs-readonly">{{ gsAnnouncement || '暂无公告' }}</div>
         </div>
-        <p v-if="!isAdmin" class="gs-tip">仅群主或管理员可修改群设置</p>
+
+        <!-- G10 保存到通讯录：任何成员可编辑 -->
+        <div class="gs-field gs-switch-row">
+          <div class="gs-switch-text">
+            <label class="gs-label">保存到通讯录</label>
+            <p class="gs-switch-tip">关闭后，该群不在通讯录的群聊列表展示</p>
+          </div>
+          <button
+            class="gs-switch"
+            :class="{ on: gsSaved }"
+            role="switch"
+            :aria-checked="gsSaved"
+            @click="gsSaved = !gsSaved"
+          >
+            <span class="gs-switch-knob"></span>
+          </button>
+        </div>
+
+        <!-- G7 入群确认 / G8 全员禁言：仅群主/管理员可编辑 -->
+        <template v-if="isAdmin">
+          <div class="gs-field gs-switch-row">
+            <div class="gs-switch-text">
+              <label class="gs-label">群聊邀请确认</label>
+              <p class="gs-switch-tip">开启后，成员邀请新好友需群主/管理员同意</p>
+            </div>
+            <button
+              class="gs-switch"
+              :class="{ on: gsInviteConfirm }"
+              role="switch"
+              :aria-checked="gsInviteConfirm"
+              @click="gsInviteConfirm = !gsInviteConfirm"
+            >
+              <span class="gs-switch-knob"></span>
+            </button>
+          </div>
+          <div class="gs-field gs-switch-row">
+            <div class="gs-switch-text">
+              <label class="gs-label">全员禁言</label>
+              <p class="gs-switch-tip">开启后，仅群主/管理员可发言</p>
+            </div>
+            <button
+              class="gs-switch"
+              :class="{ on: gsMuteAll }"
+              role="switch"
+              :aria-checked="gsMuteAll"
+              @click="gsMuteAll = !gsMuteAll"
+            >
+              <span class="gs-switch-knob"></span>
+            </button>
+          </div>
+        </template>
+        <p v-else class="gs-tip">仅群主或管理员可修改群设置与全员禁言/入群确认</p>
       </div>
 
       <footer class="invite-modal-footer">
         <button class="invite-btn-cancel" @click="emit('close')">关闭</button>
-        <button v-if="isAdmin" class="invite-btn-confirm" :disabled="gsSaving" @click="save">
+        <button class="invite-btn-confirm" :disabled="gsSaving" @click="save">
           {{ gsSaving ? '保存中…' : '保存' }}
         </button>
       </footer>
@@ -149,5 +226,61 @@ async function save() {
   margin: 0;
   font-size: 0.786rem;
   color: var(--im-text-muted);
+}
+
+/* 开关行（保存到通讯录 / 入群确认 / 全员禁言） */
+.gs-switch-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  background: var(--im-surface-2);
+  border-radius: 8px;
+}
+
+.gs-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gs-switch-tip {
+  margin: 0;
+  font-size: 0.786rem;
+  color: var(--im-text-muted);
+}
+
+.gs-switch {
+  flex-shrink: 0;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 11px;
+  background: var(--im-border);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  position: relative;
+}
+
+.gs-switch.on {
+  background: var(--im-primary);
+}
+
+.gs-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s ease;
+}
+
+.gs-switch.on .gs-switch-knob {
+  left: 20px;
 }
 </style>

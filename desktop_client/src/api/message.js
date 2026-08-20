@@ -32,6 +32,14 @@ export const messageApi = {
   recall(convId, msgId) {
     return http.post(`/conversations/${convId}/recall`, { msg_id: String(msgId) })
   },
+  // 更新会话设置（置顶/免打扰）：settings = { pinned?: 0|1, muted?: 0|1 }，未传字段保持不变
+  updateSettings(convId, settings) {
+    return http.put(`/conversations/${convId}/settings`, settings)
+  },
+  // 删除会话（仅删本人会话视图行，保留消息；再次收发消息自动重建）
+  deleteConversation(convId) {
+    return http.delete(`/conversations/${convId}`)
+  },
   // 搜索消息（keyword / type）
   search({ keyword, type, limit } = {}) {
     const q = new URLSearchParams()
@@ -40,5 +48,17 @@ export const messageApi = {
     if (limit) q.set('limit', limit)
     const qs = q.toString()
     return http.get(`/conversations/search${qs ? '?' + qs : ''}`)
+  },
+  // S6 表情回应：add=true 添加 / false 移除（仅本人反应可移除）；WS 优先，HTTP 兜底
+  setReaction(convId, msgId, emoji, add) {
+    return http.post(`/conversations/${convId}/messages/${msgId}/reactions`, { emoji, add })
+  },
+  // S6 查询单条消息的表情回应列表
+  getReactions(convId, msgId) {
+    return http.get(`/conversations/${convId}/messages/${msgId}/reactions`)
+  },
+  // G14 群消息已读人数（仅群主/管理员可查，企业微信策略）
+  readCount(convId, msgId) {
+    return http.get(`/conversations/${convId}/messages/${msgId}/read_count`)
   },
 }

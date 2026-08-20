@@ -31,11 +31,16 @@ function register() {
   ipcMain.handle('store:conversations:list', safe(() => conversationRepo.listByOwner()))
   ipcMain.handle('store:conversations:upsert', safe((arg) => conversationRepo.upsertMany(arg?.convs)))
   ipcMain.handle('store:conversations:bump', safe((arg) => {
-    conversationRepo.bumpLastMessage(arg?.convId, arg?.lastMsg, arg?.lastMsgTime)
+    conversationRepo.bumpLastMessage(arg?.convId, arg?.lastMsg, arg?.lastMsgTime, arg?.senderUid, arg?.senderName)
     return true
   }))
   ipcMain.handle('store:conversations:set-unread', safe((arg) => {
     conversationRepo.setUnread(arg?.convId, arg?.unread)
+    return true
+  }))
+  // 标记未读（纯本地状态，不与服务端同步）
+  ipcMain.handle('store:conversations:set-marked-unread', safe((arg) => {
+    conversationRepo.setMarkedUnread(arg?.convId, arg?.flag)
     return true
   }))
   ipcMain.handle('store:conversations:update-sync-seq', safe((arg) => {
@@ -46,8 +51,20 @@ function register() {
   ipcMain.handle('store:conversations:set-no-persist', safe((arg) =>
     conversationRepo.setNoPersist(arg?.convId, arg?.flag)
   ))
+  // 会话草稿（纯本地，不同步服务端）
+  ipcMain.handle('store:conversations:set-draft', safe((arg) =>
+    conversationRepo.setDraft(arg?.convId, arg?.draft)
+  ))
+  // 会话置顶/免打扰：本地即时生效，服务端同步由渲染进程另行调 HTTP
+  ipcMain.handle('store:conversations:set-settings', safe((arg) =>
+    conversationRepo.setSettings(arg?.convId, { pinned: arg?.pinned, muted: arg?.muted })
+  ))
   // 删除会话行（退群清理）
   ipcMain.handle('store:conversations:remove', safe((arg) => conversationRepo.remove(arg?.convId)))
+  // 批量删除消息（多选删除，仅本地视角）
+  ipcMain.handle('store:messages:delete-many', safe((arg) =>
+    messageRepo.deleteMany(arg?.convId, { serverIds: arg?.serverIds, localIds: arg?.localIds })
+  ))
 
   // ---- messages ----
   ipcMain.handle('store:messages:list', safe((arg) =>

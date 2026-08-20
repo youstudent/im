@@ -2,7 +2,7 @@
 import { MSG_TYPE, SEND_TIMEOUT_MS, formatMsgTime, formatConvTime } from './format'
 import { AUDIO_EXT_RE, VIDEO_EXT_RE } from './fileGuard'
 
-// 消息类型占位文案（与后端 convPreview 保持一致）：1 文本 / 2 图片 / 3 文件 / 4 语音 / 5 视频 / 6 系统
+// 消息类型占位文案（与后端 convPreview 保持一致）：1 文本 / 2 图片 / 3 文件 / 4 语音 / 5 视频 / 6 系统 / 7 合并转发
 export function msgTypeLabel(type) {
   switch (type) {
     case MSG_TYPE.IMAGE: return '[图片]'
@@ -10,6 +10,7 @@ export function msgTypeLabel(type) {
     case MSG_TYPE.VOICE: return '[语音]'
     case MSG_TYPE.VIDEO: return '[视频]'
     case MSG_TYPE.SYSTEM: return '[系统消息]'
+    case MSG_TYPE.MERGE: return '[合并转发]'
     default: return ''
   }
 }
@@ -112,10 +113,16 @@ export function toConvItem(c, contactMap) {
     online: false,
     type: Number(c.type) === 2 ? 'group' : info.type || null,
     lastMessage: c.last_msg || '',
+    // 最后消息发送者（群聊列表拼 "发送者: 内容" 前缀，渲染时动态解析名称）；
+    // 服务端 DTO 与本地库行同名字段，0/空表示系统/无
+    lastSenderUid: Number(c.last_sender_uid) || 0,
+    lastSenderName: c.last_sender_name || '',
+    lastMentionMe: false, // [有人@我] 标记（内存态，重启不保留）
     // 用最后消息时间格式化展示（微信风格：今天时刻/昨天/星期/日期）；无消息则留空
     time: formatConvTime(lastMsgTime),
     lastMsgTime, // 最后消息 unix 秒时间戳，用于会话排序
     unread: Number(c.unread) || 0,
+    markedUnread: !!Number(c.marked_unread), // 标记未读（纯本地：手动挂起红点，收新消息/打开会话自动清除）
     // uid/g_uid 为 10 位数字，Number 安全；本地库行 target_id 为文本，必须归一为数字，
     // 否则发送消息时字符串 target_id 会被后端 int64 反序列化拒绝
     targetId: c.target_id != null ? Number(c.target_id) : 0,
@@ -123,6 +130,9 @@ export function toConvItem(c, contactMap) {
     peerReadSeq: Number(c.peer_read_seq) || 0,
     // 同步水位：服务端下发的 last_synced_seq（本地行同名字段），本地追平则免拉历史
     syncSeq: Number(c.last_synced_seq) || 0,
+    pinned: !!Number(c.pinned) || c.pinned === true, // 置顶（列表置顶区优先排序）
+    muted: !!Number(c.muted) || c.muted === true, // 免打扰（不提醒，未读角标变灰点）
+    draft: c.draft || '', // 草稿（纯本地；列表红色 [草稿] 前缀，切换会话时恢复）
     messages: [],
     oldestSeq: 0,
     _hasMore: false,
@@ -180,6 +190,7 @@ export function createMessageMapper(deps) {
       time: formatMsgTime(m.created_at),
       server: true,
       voicePlayed: !!flags.voicePlayed, // 语音已播放标记（本地库加载时传入，红点状态随消息恢复）
+      reactions: Array.isArray(m.reactions) ? m.reactions : [], // S6 表情回应（服务端历史/增量携带）
     }
   }
 

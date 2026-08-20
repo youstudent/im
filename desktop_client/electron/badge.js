@@ -126,4 +126,28 @@ function renderBadgePNG(text) {
   return encodePNG(w, h, px)
 }
 
-module.exports = { renderBadgePNG }
+/**
+ * 渲染灰点角标 PNG（L7 托盘灰点）：免打扰会话只有未读红点、不贡献数字时使用。
+ * 直径 16px 灰点（#94a3b8），与红色数字角标区分。
+ */
+function renderDotPNG() {
+  const d = 16
+  const px = Buffer.alloc(d * d * 4)
+  const c = d / 2
+  const r = d / 2
+  for (let y = 0; y < d; y++) {
+    for (let x = 0; x < d; x++) {
+      const dx = x + 0.5 - c
+      const dy = y + 0.5 - c
+      if (dx * dx + dy * dy > r * r) continue
+      const o = (y * d + x) * 4
+      px[o] = 0x94
+      px[o + 1] = 0xa3
+      px[o + 2] = 0xb8
+      px[o + 3] = 0xff
+    }
+  }
+  return encodePNG(d, d, px)
+}
+
+module.exports = { renderBadgePNG, renderDotPNG }

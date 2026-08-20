@@ -23,10 +23,10 @@ func NewHandler(svc *Service) *Handler {
 
 // ---- 好友 ----
 
-// SearchUser 按手机号/邮箱/昵称搜索用户（用于加好友）。
+// SearchUser 按手机号/邮箱/昵称搜索用户（用于加好友），附带与当前用户的关系状态。
 func (h *Handler) SearchUser(c *gin.Context) {
 	account := c.Query("account")
-	u, err := h.svc.SearchUser(account)
+	u, err := h.svc.SearchUser(mustUID(c), account)
 	if err != nil {
 		resp.Fail(c, err)
 		return
@@ -213,6 +213,166 @@ func (h *Handler) LeaveGroup(c *gin.Context) {
 	uid := mustUID(c)
 	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
 	if err := h.svc.LeaveGroup(uid, gUID); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// RemoveMember 移除群成员（群主/管理员；管理员仅可移除普通成员，后端鉴权）。
+// 路由用 POST .../kick 而非 DELETE /members/:uid：与已有 DELETE /members/me 静态段同层，
+// 通配参数会与之冲突（Gin 启动 panic），故分方法分路径。
+func (h *Handler) RemoveMember(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	targetUID, _ := strconv.ParseInt(c.Param("uid"), 10, 64)
+	if targetUID <= 0 {
+		resp.Fail(c, apperr.BadRequest("成员 ID 无效"))
+		return
+	}
+	if err := h.svc.RemoveMember(uid, gUID, targetUID); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// SetMemberRole 设为/取消管理员（仅群主，后端鉴权）：body { role: 1 管理员 | 2 普通成员 }。
+func (h *Handler) SetMemberRole(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	targetUID, _ := strconv.ParseInt(c.Param("uid"), 10, 64)
+	if targetUID <= 0 {
+		resp.Fail(c, apperr.BadRequest("成员 ID 无效"))
+		return
+	}
+	var req struct {
+		Role int8 `json:"role"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if err := h.svc.SetMemberRole(uid, gUID, targetUID, req.Role); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// TransferOwner 转让群主（仅现任群主，后端鉴权）：body { new_owner_uid }。
+func (h *Handler) TransferOwner(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	var req struct {
+		NewOwnerUID int64 `json:"new_owner_uid"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if req.NewOwnerUID <= 0 {
+		resp.Fail(c, apperr.BadRequest("目标成员无效"))
+		return
+	}
+	if err := h.svc.TransferOwnership(uid, gUID, req.NewOwnerUID); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// SetMyNickname 设置我的群内昵称（任何成员）：body { nickname }，空字符串清除。
+func (h *Handler) SetMyNickname(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	var req struct {
+		Nickname string `json:"nickname"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if err := h.svc.SetMyNickname(uid, gUID, req.Nickname); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// UpdateGroupSettings 更新群设置开关（G7 入群确认 / G8 全员禁言，仅群主/管理员）：body { invite_confirm?, mute_all? }。
+func (h *Handler) UpdateGroupSettings(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	var req struct {
+		InviteConfirm *int8 `json:"invite_confirm"`
+		MuteAll       *int8 `json:"mute_all"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if err := h.svc.UpdateGroupSettings(uid, gUID, req.InviteConfirm, req.MuteAll); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// DecideInvite 处理入群确认（G7，仅群主/管理员）：body { invitee_uid, accept }。
+func (h *Handler) DecideInvite(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	var req struct {
+		InviteeUID int64 `json:"invitee_uid"`
+		Accept     bool  `json:"accept"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if req.InviteeUID <= 0 {
+		resp.Fail(c, apperr.BadRequest("目标成员无效"))
+		return
+	}
+	if err := h.svc.DecideInvite(uid, gUID, req.InviteeUID, req.Accept); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// SetMemberMutedUntil 设置/解除成员禁言（G8，仅群主/管理员）：body { until }，unix 毫秒，0=解除。
+func (h *Handler) SetMemberMutedUntil(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	targetUID, _ := strconv.ParseInt(c.Param("uid"), 10, 64)
+	var req struct {
+		Until int64 `json:"until"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if err := h.svc.SetMemberMutedUntil(uid, gUID, targetUID, req.Until); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.OKNoData(c)
+}
+
+// UpdateGroupSaved 更新我"保存到通讯录"开关（G10，任何成员）：body { saved }。
+func (h *Handler) UpdateGroupSaved(c *gin.Context) {
+	uid := mustUID(c)
+	gUID, _ := strconv.ParseInt(c.Param("gid"), 10, 64)
+	var req struct {
+		Saved int8 `json:"saved"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
+		return
+	}
+	if err := h.svc.UpdateGroupSaved(uid, gUID, req.Saved); err != nil {
 		resp.Fail(c, err)
 		return
 	}

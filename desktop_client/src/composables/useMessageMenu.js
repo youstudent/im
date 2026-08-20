@@ -1,9 +1,9 @@
-// 微信风格：消息操作菜单（右键 / 点击）——复制与撤回
+// 微信风格：消息操作菜单（右键 / 点击）——复制、引用与撤回
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { messageApi } from '../api/message'
 
 export function useMessageMenu(ctx) {
-  const { realConvMap, activeId, message, inputFieldEl, autoResizeInput, refreshConvPreview } = ctx
+  const { realConvMap, activeId, message, inputFieldEl, autoResizeInput, refreshConvPreview, startQuote } = ctx
 
   const msgMenu = ref(null) // { x, y } | null
   const menuMsg = ref(null) // 当前操作的消息
@@ -53,6 +53,20 @@ export function useMessageMenu(ctx) {
     const created = Number(msg.createdAt) * 1000
     if (!created) return false
     return Date.now() - created <= 2 * 60 * 1000
+  }
+
+  // 是否可引用：系统消息与已撤回消息不可引用（收发两侧均可引用其余消息）
+  function canQuote(msg) {
+    if (!msg || msg.isSystem || msg.status === 1) return false
+    return true
+  }
+
+  // 引用：构建被引消息快照交给输入区（展示引用条，发送时携带 extra.quote）
+  function quoteMsg() {
+    const msg = menuMsg.value
+    closeMsgMenu()
+    if (!canQuote(msg) || typeof startQuote !== 'function') return
+    startQuote(msg)
   }
 
   // 撤回消息：调用后端接口（2 分钟内），成功后本地把消息标记为已撤回。
@@ -106,5 +120,5 @@ export function useMessageMenu(ctx) {
     document.removeEventListener('scroll', closeMsgMenu, true)
   })
 
-  return { msgMenu, menuMsg, openMsgMenu, copyMsgText, canRecall, recallMessage, recallEdit, closeMsgMenu }
+  return { msgMenu, menuMsg, openMsgMenu, copyMsgText, canRecall, recallMessage, recallEdit, closeMsgMenu, canQuote, quoteMsg }
 }

@@ -216,6 +216,24 @@ return redis.call('INCR', KEYS[1])
 	wsServer.SetFriendCheck(socialSvc.AreFriends)
 	// 群聊同步会话：把群成员查询注入消息服务，供发送群消息时更新每个成员会话的最后消息
 	msgSvc.SetGroupMembers(socialSvc.GetGroupMembers)
+	// @ 提及通知：群消息落库后为被 @ 成员写通知中心条目（notifications 表 type=mention）
+	msgSvc.SetMentionNotify(socialSvc.NotifyMentioned)
+	// G8 群禁言守卫：全员禁言/个人禁言拦截普通成员发送
+	msgSvc.SetGroupMuteCheck(socialSvc.GroupMuteCheck)
+	// G2 @所有人鉴权 + G14 已读人数权限：群成员角色查询
+	msgSvc.SetGroupRoleCheck(func(gUID, uid int64) (int8, error) {
+		return socialSvc.GetMemberRole(gUID, uid)
+	})
+	// S6 表情回应推送：向接收方推送 reaction 帧（单聊对端 / 群聊其他成员）
+	msgSvc.SetReactionNotify(func(recipients []int64, data interface{}) {
+		if hub == nil || len(recipients) == 0 {
+			return
+		}
+		frame := &gateway.Frame{Ver: 1, Type: gateway.FrameReaction, Seq: 0, Body: data}
+		for _, uid := range recipients {
+			hub.Push(uid, frame)
+		}
+	})
 	// 注入系统消息推送能力：按 uid 推送 msg.push 帧（群创建系统消息等多接收方场景）
 	msgSvc.SetPushFunc(func(uid int64, msg *message.MessageDTO) {
 		if hub != nil {

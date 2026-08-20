@@ -79,6 +79,10 @@ func (m *mockHandler) HandleAck(uid int64, body json.RawMessage) (*Frame, []int6
 	return nil, nil, nil
 }
 
+func (m *mockHandler) HandleTyping(uid int64, body json.RawMessage) ([]int64, error) {
+	return nil, nil
+}
+
 // ackHandler 可选：用于模拟"服务端转发 ack 给发送方"。
 type ackHandlerFunc func(uid int64, body json.RawMessage) (*Frame, []int64, error)
 

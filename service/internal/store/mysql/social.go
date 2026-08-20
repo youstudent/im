@@ -157,6 +157,15 @@ func (d *DB) UpdateFriendRequestStatus(id int64, status int8) error {
 	return err
 }
 
+// HasPendingFriendRequest 判断 fromUID 是否已向 toUID 发送过待处理的好友申请
+// （搜索用户时前端据此置灰"发送验证申请"按钮，避免重复发送）。
+func (d *DB) HasPendingFriendRequest(fromUID, toUID int64) (bool, error) {
+	var n int
+	err := d.QueryRow(`SELECT COUNT(1) FROM friend_requests WHERE from_uid = ? AND to_uid = ? AND status = 0`,
+		fromUID, toUID).Scan(&n)
+	return n > 0, err
+}
+
 // ---- 群组 ----
 
 // Group 群。
@@ -169,6 +178,8 @@ type Group struct {
 	MemberCount int
 	Avatar      string
 	ConvID      int64 // 群聊统一会话 ID（所有成员共享）
+	InviteConfirm int8 // 邀请需确认（G7）：1=成员邀请需群主/管理员同意
+	MuteAll       int8 // 全员禁言（G8）：1=仅群主/管理员可发言
 	CreatedAt   time.Time
 }
 
@@ -181,7 +192,7 @@ func (d *DB) CreateGroup(g *Group) error {
 
 // GetGroupByGUID 按业务群号查群。
 func (d *DB) GetGroupByGUID(gUID int64) (*Group, error) {
-	row := d.QueryRow("SELECT id, g_uid, name, owner_uid, announcement, member_count, avatar, conv_id, created_at FROM `groups` WHERE g_uid = ?", gUID)
+	row := d.QueryRow("SELECT id, g_uid, name, owner_uid, announcement, member_count, avatar, conv_id, invite_confirm, mute_all, created_at FROM `groups` WHERE g_uid = ?", gUID)
 	g, err := scanGroup(row)
 	if err != nil {
 		return nil, err
@@ -197,7 +208,7 @@ func (d *DB) GetGroupsByGUIDs(gUIDs []int64) map[int64]*Group {
 		return out
 	}
 	var sb strings.Builder
-	sb.WriteString("SELECT id, g_uid, name, owner_uid, announcement, member_count, avatar, conv_id, created_at FROM `groups` WHERE g_uid IN (")
+	sb.WriteString("SELECT id, g_uid, name, owner_uid, announcement, member_count, avatar, conv_id, invite_confirm, mute_all, created_at FROM `groups` WHERE g_uid IN (")
 	args := make([]interface{}, 0, len(gUIDs))
 	for i, g := range gUIDs {
 		if i > 0 {
@@ -244,6 +255,77 @@ func (d *DB) RemoveGroupMember(gUID, uid int64) error {
 	return nil
 }
 
+// UpdateGroupMemberRole 更新群成员角色（1 管理员 / 2 普通成员；群主不可通过此方法变更）。
+func (d *DB) UpdateGroupMemberRole(gUID, uid int64, role int8) error {
+	_, err := d.Exec(`UPDATE group_members SET role = ? WHERE g_uid = ? AND uid = ? AND role != 0`, role, gUID, uid)
+	return err
+}
+
+// TransferGroupOwner 转让群主：更新群 owner_uid + 新群主 role=0 + 原群主 role=2。
+// 三步非事务（单库低频操作，失败时服务端返回错误，客户端可重试）。
+func (d *DB) TransferGroupOwner(gUID, oldOwnerUID, newOwnerUID int64) error {
+	if _, err := d.Exec("UPDATE `groups` SET owner_uid = ? WHERE g_uid = ?", newOwnerUID, gUID); err != nil {
+		return err
+	}
+	if _, err := d.Exec(`UPDATE group_members SET role = 0 WHERE g_uid = ? AND uid = ?`, gUID, newOwnerUID); err != nil {
+		return err
+	}
+	_, err := d.Exec(`UPDATE group_members SET role = 2 WHERE g_uid = ? AND uid = ? AND role = 0`, gUID, oldOwnerUID)
+	return err
+}
+
+// UpdateGroupMemberNickname 设置群内昵称（空字符串清除，回落用户昵称）。
+func (d *DB) UpdateGroupMemberNickname(gUID, uid int64, nickname string) error {
+	var v interface{}
+	if nickname != "" {
+		v = nickname
+	}
+	_, err := d.Exec(`UPDATE group_members SET nickname = ? WHERE g_uid = ? AND uid = ?`, v, gUID, uid)
+	return err
+}
+
+// ListGroupMemberNicknames 批量查询群内昵称（仅返回已设置的，uid → nickname）。
+func (d *DB) ListGroupMemberNicknames(gUID int64) (map[int64]string, error) {
+	rows, err := d.Query(`SELECT uid, nickname FROM group_members WHERE g_uid = ? AND nickname IS NOT NULL AND nickname != ''`, gUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]string)
+	for rows.Next() {
+		var uid int64
+		var nick string
+		if err := rows.Scan(&uid, &nick); err != nil {
+			return nil, err
+		}
+		out[uid] = nick
+	}
+	return out, rows.Err()
+}
+
+// ListGroupMemberRoles 批量查询群成员角色（uid → role），供群资料页展示群主/管理员标签。
+func (d *DB) ListGroupMemberRoles(gUID int64) (map[int64]int8, error) {
+	rows, err := d.Query(`SELECT uid, role FROM group_members WHERE g_uid = ?`, gUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]int8)
+	for rows.Next() {
+		var uid int64
+		var role sql.NullInt64
+		if err := rows.Scan(&uid, &role); err != nil {
+			return nil, err
+		}
+		r := int8(2)
+		if role.Valid {
+			r = int8(role.Int64)
+		}
+		out[uid] = r
+	}
+	return out, rows.Err()
+}
+
 // IsGroupMember 判断是否群成员。
 func (d *DB) IsGroupMember(gUID, uid int64) (bool, error) {
 	var n int
@@ -270,9 +352,9 @@ func (d *DB) GetGroupMemberRole(gUID, uid int64) (int8, error) {
 	return int8(role.Int64), nil
 }
 
-// ListGroupMembers 列出群成员 uid。
+// ListGroupMembers 列出群成员 uid（按入群时间升序，客户端据此保持同角色内入群先后顺序）。
 func (d *DB) ListGroupMembers(gUID int64) ([]int64, error) {
-	rows, err := d.Query(`SELECT uid FROM group_members WHERE g_uid = ?`, gUID)
+	rows, err := d.Query(`SELECT uid FROM group_members WHERE g_uid = ? ORDER BY join_time, uid`, gUID)
 	if err != nil {
 		return nil, err
 	}
@@ -346,6 +428,112 @@ func (d *DB) UpdateGroup(gUID int64, name, announcement string) error {
 	return err
 }
 
+// UpdateGroupSettings 更新群设置开关（G7 入群确认 / G8 全员禁言）：
+// inviteConfirm / muteAll 为 nil 表示不更新对应字段，取值仅允许 0/1。
+func (d *DB) UpdateGroupSettings(gUID int64, inviteConfirm, muteAll *int8) error {
+	if inviteConfirm == nil && muteAll == nil {
+		return nil
+	}
+	sets := make([]string, 0, 2)
+	args := make([]interface{}, 0, 3)
+	if inviteConfirm != nil {
+		sets = append(sets, "invite_confirm = ?")
+		args = append(args, *inviteConfirm)
+	}
+	if muteAll != nil {
+		sets = append(sets, "mute_all = ?")
+		args = append(args, *muteAll)
+	}
+	args = append(args, gUID)
+	_, err := d.Exec("UPDATE `groups` SET "+strings.Join(sets, ", ")+" WHERE g_uid = ?", args...)
+	return err
+}
+
+// GetGroupMuteState 查询群全员禁言开关（G8 发送守卫用）。
+func (d *DB) GetGroupMuteState(gUID int64) (int8, error) {
+	var mute sql.NullInt64
+	err := d.QueryRow("SELECT mute_all FROM `groups` WHERE g_uid = ?", gUID).Scan(&mute)
+	if err != nil {
+		return 0, err
+	}
+	if !mute.Valid {
+		return 0, nil
+	}
+	return int8(mute.Int64), nil
+}
+
+// UpdateMemberMutedUntil 设置/解除成员禁言（G8）：until 为 unix 毫秒，0/负数=解除。
+func (d *DB) UpdateMemberMutedUntil(gUID, uid int64, until int64) error {
+	var v interface{}
+	if until > 0 {
+		v = until
+	}
+	_, err := d.Exec(`UPDATE group_members SET muted_until = ? WHERE g_uid = ? AND uid = ?`, v, gUID, uid)
+	return err
+}
+
+// ListGroupMemberMutes 批量查询群成员禁言截止时间（uid → unix 毫秒，0=未禁言）。
+func (d *DB) ListGroupMemberMutes(gUID int64) (map[int64]int64, error) {
+	rows, err := d.Query(`SELECT uid, COALESCE(muted_until, 0) FROM group_members WHERE g_uid = ?`, gUID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]int64)
+	for rows.Next() {
+		var uid, until int64
+		if err := rows.Scan(&uid, &until); err != nil {
+			return nil, err
+		}
+		out[uid] = until
+	}
+	return out, rows.Err()
+}
+
+// UpdateGroupMemberSaved 更新成员"保存到通讯录"开关（G10，仅操作自己的行）。
+func (d *DB) UpdateGroupMemberSaved(gUID, uid int64, saved int8) error {
+	_, err := d.Exec(`UPDATE group_members SET saved = ? WHERE g_uid = ? AND uid = ?`, saved, gUID, uid)
+	return err
+}
+
+// ListGroupMemberSaved 批量查询某成员在多个群的"保存到通讯录"开关（g_uid → saved，群列表填充用）。
+func (d *DB) ListGroupMemberSaved(uid int64, gUIDs []int64) (map[int64]int8, error) {
+	out := make(map[int64]int8, len(gUIDs))
+	if len(gUIDs) == 0 {
+		return out, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("SELECT g_uid, saved FROM group_members WHERE uid = ? AND g_uid IN (")
+	args := make([]interface{}, 0, len(gUIDs)+1)
+	args = append(args, uid)
+	for i, g := range gUIDs {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("?")
+		args = append(args, g)
+	}
+	sb.WriteString(")")
+	rows, err := d.Query(sb.String(), args...)
+	if err != nil {
+		return out, nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var gUID int64
+		var saved sql.NullInt64
+		if err := rows.Scan(&gUID, &saved); err != nil {
+			return out, nil
+		}
+		v := int8(1)
+		if saved.Valid {
+			v = int8(saved.Int64)
+		}
+		out[gUID] = v
+	}
+	return out, rows.Err()
+}
+
 // GUIDExists 检查群号是否占用。
 func (d *DB) GUIDExists(gUID int64) (bool, error) {
 	var n int
@@ -361,13 +549,21 @@ func scanGroup(row interface{ Scan(...interface{}) error }) (*Group, error) {
 	var ann sql.NullString
 	var av sql.NullString
 	var conv sql.NullInt64
-	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.OwnerUID, &ann, &g.MemberCount, &av, &conv, &g.CreatedAt)
+	var invite sql.NullInt64
+	var mute sql.NullInt64
+	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.OwnerUID, &ann, &g.MemberCount, &av, &conv, &invite, &mute, &g.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	g.Announcement = ann.String
 	g.Avatar = av.String
 	g.ConvID = conv.Int64
+	if invite.Valid {
+		g.InviteConfirm = int8(invite.Int64)
+	}
+	if mute.Valid {
+		g.MuteAll = int8(mute.Int64)
+	}
 	return &g, nil
 }
 

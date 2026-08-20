@@ -11,6 +11,7 @@ import NavRail from './components/NavRail.vue'
 import MainWindow from './components/MainWindow.vue'
 import ContactsWindow from './components/ContactsWindow.vue'
 import AddFriendModal from './components/AddFriendModal.vue'
+import FriendRequestPopup from './components/FriendRequestPopup.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import NotificationCenter from './components/NotificationCenter.vue'
 import LoginWindow from './components/LoginWindow.vue'
@@ -28,15 +29,40 @@ const addFriendBadge = ref(false)
 // 红点由 WS 实时推送驱动：收到 friend.request 事件时显示，打开添加好友弹窗时清除。
 // 不再主动请求 /friends/requests（按需加载）。
 
-// 监听 WS social 事件：收到新的好友申请时显示红点（含对方在线时实时推送）
+// 监听 WS social 事件：收到新的好友申请时显示红点 + 右下角弹框（含对方在线时实时推送）
 let wsSocialUnsub = null
 function setupWsBadge() {
   if (wsSocialUnsub) return
   wsSocialUnsub = wsClient.on('social', (body) => {
     if (body && body.event === 'friend.request') {
       addFriendBadge.value = true
+      // 携带 req_id 时入队弹框（兼容旧服务端无 req_id 的推送：仅红点提醒）；
+      // 同一申请去重，避免重复弹出
+      const d = body.data || {}
+      if (d.req_id != null && !friendReqQueue.value.some((r) => r.reqId === d.req_id)) {
+        friendReqQueue.value.push({
+          reqId: String(d.req_id),
+          fromUid: d.from_uid,
+          nickname: d.nickname || '',
+          message: d.message || '',
+        })
+      }
     }
   })
+}
+
+// ===== 好友申请实时弹框（队列：同时只展示一个，处理后自动弹下一个） =====
+const friendReqQueue = ref([])
+const currentFriendReq = computed(() => friendReqQueue.value[0] || null)
+
+// 关闭弹框：仅收起当前条，申请仍在通知中心/添加好友弹窗中可处理
+function shiftFriendReq() {
+  friendReqQueue.value.shift()
+}
+
+// 同意/拒绝成功后同样出队（结果文案由弹框内部短暂展示后自动 close）
+function onFriendReqHandled() {
+  /* 新会话由 WS conversation.created 事件增量插入，无需额外重载 */
 }
 
 // "添加好友"弹窗开关
@@ -51,12 +77,30 @@ const showSearchHistory = ref(false)
 // 待打开的消息会话 id：通讯录点击"发消息"后，切到消息页并打开指定会话
 const openConversation = ref(null)
 
+// 待发起语音通话的目标 id：通讯录点击"语音通话"后，切到消息页打开会话并由 MainWindow 发起通话
+const pendingVoiceCall = ref(null)
+
 // 通讯录"发消息"/"进入"：切换到消息页，并让 MainWindow 打开对应会话
 // 先置空再赋值：同一联系人重复点击时也能触发 MainWindow 的 watch 重新跳转
 function handleSendMessage(id) {
+  pendingVoiceCall.value = null // 普通发消息不携带上次语音通话意图
   openConversation.value = null
   nextTick(() => {
     openConversation.value = id
+  })
+  activePage.value = 'messages'
+  if (typeof window !== 'undefined') {
+    window.location.hash = 'messages'
+  }
+}
+
+// 通讯录"语音通话"：切换到消息页，打开对应会话，并通知 MainWindow 发起语音通话
+function handleStartVoiceCall(id) {
+  pendingVoiceCall.value = null
+  openConversation.value = null
+  nextTick(() => {
+    openConversation.value = id
+    pendingVoiceCall.value = id
   })
   activePage.value = 'messages'
   if (typeof window !== 'undefined') {
@@ -351,11 +395,13 @@ const currentView = computed(() => {
           class="frame-view"
           :show-search-history="showSearchHistory"
           :open-conversation="openConversation"
+          :pending-voice-call="pendingVoiceCall"
           :chat-badge="chatBadge"
           @update:show-search-history="showSearchHistory = $event"
           @update:chat-badge="chatBadge = $event"
           @request-add-friend="openAddFriend"
           @send-message="handleSendMessage"
+          @start-voice-call="handleStartVoiceCall"
           @group-created="handleGroupCreated"
         />
       </KeepAlive>
@@ -377,6 +423,14 @@ const currentView = computed(() => {
 
     <!-- 添加好友弹窗：点击底部"新建"按钮打开 -->
     <AddFriendModal v-if="showAddFriend" @close="showAddFriend = false" @friend-added="onFriendAdded" />
+
+    <!-- 好友申请实时弹框：收到 friend.request 事件右下角弹出，可关闭/同意/拒绝 -->
+    <FriendRequestPopup
+      v-if="currentFriendReq"
+      :req="currentFriendReq"
+      @close="shiftFriendReq()"
+      @handled="onFriendReqHandled()"
+    />
 
     <!-- 设置窗口弹窗：点击底部"+"下方齿轮按钮打开 -->
     <SettingsWindow v-if="showSettings" @close="showSettings = false" @logout="handleLogout" />

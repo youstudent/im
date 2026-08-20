@@ -30,11 +30,17 @@ let ackTimer = null
 const ACK_TIMEOUT = 5000 // 5s 未确认视为超时
 const ACK_MAX_RETRIES = 3 // 最多重发 3 次
 
+// 正在输入节流（S7）：同一会话输入状态至少间隔 TYPING_THROTTLE_MS 才再发一帧
+let lastTypingAt = 0
+const TYPING_THROTTLE_MS = 3000
+
 // 事件订阅
 const listeners = {
   message: [], // (msg) => {} 收到新消息
   read: [], // (data) => {} 对方已读
   call: [], // (data) => {} 通话信令（call.push 帧）
+  reaction: [], // (data) => {} 表情回应变更（S6 reaction 帧）
+  typing: [], // (data) => {} 对方正在输入（S7 typing 帧）
   open: [],
   close: [],
   error: [],
@@ -123,6 +129,24 @@ export const wsClient = {
   // body: { call_id, action, to, payload }
   sendCall(body) {
     return sendFrame('call', body)
+  },
+
+  // 表情回应（S6）：add=true 添加 / false 移除；HTTP 兜底在 api/message.js，WS 仅发送（无需 ack 确认）
+  sendReaction(convId, msgId, emoji, add) {
+    return sendFrame('reaction', {
+      conv_id: String(convId),
+      msg_id: String(msgId),
+      emoji,
+      add: !!add,
+    })
+  },
+
+  // 正在输入（S7）：3s 节流防抖，避免输入过程中高频刷帧
+  sendTyping(convId) {
+    const now = Date.now()
+    if (now - lastTypingAt < TYPING_THROTTLE_MS) return
+    lastTypingAt = now
+    sendFrame('typing', { conv_id: String(convId) })
   },
 }
 
@@ -250,6 +274,14 @@ function handleFrame(frame) {
     case 'call.push':
       // 通话信令：转交通话状态机处理（invite/answer/ice/reject/busy/cancel/hangup/offline）
       emit('call', frame.body)
+      break
+    case 'reaction':
+      // 表情回应变更（S6）：{ conv_id, msg_id, uid, emoji, add }
+      emit('reaction', frame.body)
+      break
+    case 'typing':
+      // 对方正在输入（S7）：{ conv_id }
+      emit('typing', frame.body)
       break
     case 'kick':
       // 被服务端强制下线（账号被管理员禁用等）：停止重连、清空令牌、跳转登录页

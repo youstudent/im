@@ -10,11 +10,24 @@ const query = ref('')
 // 是否已执行搜索（用于控制结果卡片显隐）
 const hasSearched = ref(false)
 
-// 是否已发送验证申请
+// 是否已发送验证申请（本次会话内刚发送）
 const applied = ref(false)
 
 // 搜索结果是否已是好友（按钮置灰为“已是好友”，后端同样拦截）
 const alreadyFriend = ref(false)
+
+// 是否已向对方发送过待处理的好友申请（搜索出结果时由后端返回，按钮置灰并提示等待处理）
+const requestSent = ref(false)
+
+// 申请按钮置灰条件：已是好友 / 已发送过待处理申请 / 本次刚发送
+const applyDisabled = computed(() => alreadyFriend.value || requestSent.value || applied.value)
+
+// 申请按钮文案：按状态展示对应提示
+const applyLabel = computed(() => {
+  if (alreadyFriend.value) return '已是好友'
+  if (requestSent.value || applied.value) return '好友申请已发送，请等待对方处理'
+  return '发送验证申请'
+})
 
 // 好友请求列表数据（后端可达时用真实数据）
 const requests = ref([])
@@ -80,6 +93,7 @@ async function doSearch() {
   searching.value = true
   applied.value = false
   alreadyFriend.value = false
+  requestSent.value = false
   try {
     const u = await friendApi.search(v)
     // 拦截添加自己（后端同样拦截，前端先行提示）
@@ -88,8 +102,10 @@ async function doSearch() {
       return
     }
     searchResult.value = u
-    // 已是好友：禁用申请按钮
-    alreadyFriend.value = await isFriend(u.uid)
+    // 已是好友：禁用申请按钮（后端返回 is_friend；旧后端无此字段时回落本地好友缓存判断）
+    alreadyFriend.value = typeof u.is_friend === 'boolean' ? u.is_friend : await isFriend(u.uid)
+    // 已发送过待处理申请：置灰按钮并提示等待对方处理（后端返回 request_sent）
+    requestSent.value = !!u.request_sent
   } catch (e) {
     searchError.value = e.message || '未找到该用户'
   } finally {
@@ -99,7 +115,7 @@ async function doSearch() {
 
 // 发送验证申请（用搜索到的用户 uid；自己/已是好友/已发送时不允许点击）
 async function sendApply() {
-  if (!searchResult.value || applied.value || alreadyFriend.value) return
+  if (!searchResult.value || applyDisabled.value) return
   applied.value = true
   try {
     await friendApi.sendRequest(searchResult.value.uid, '你好，我是 WorkChat 用户')
@@ -206,11 +222,12 @@ function closeModal() {
             </div>
             <button
               class="btn-apply"
-              :class="{ done: applied || alreadyFriend }"
-              :disabled="applied || alreadyFriend"
+              :class="{ done: applyDisabled }"
+              :disabled="applyDisabled"
+              :title="requestSent || applied ? '好友申请已发送，请等待对方处理' : ''"
               @click="sendApply"
             >
-              <span>{{ alreadyFriend ? '已是好友' : applied ? '已发送' : '发送验证申请' }}</span>
+              <span>{{ applyLabel }}</span>
             </button>
           </template>
         </div>
@@ -506,6 +523,7 @@ function closeModal() {
   background: var(--im-surface-2);
   color: var(--im-text-secondary);
   cursor: default;
+  white-space: nowrap;
 }
 
 /* ===== 分隔线 ===== */

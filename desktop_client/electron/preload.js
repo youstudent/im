@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ping: () => ipcRenderer.invoke('app:ping'),
   // 用系统默认浏览器打开外部链接（仅 http/https）
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
+  // 读取剪贴板图片（PNG dataURL，无图片返回空串）：粘贴发送截图的兼底通道
+  clipboard: {
+    readImage: () => ipcRenderer.invoke('clipboard:read-image'),
+  },
   // 自动更新：下载安装包并静默安装；进度经 updater:progress 事件回传
   updater: {
     // installDir：当前应用安装目录（渲染进程传 process.execPath），静默安装时覆盖安装到原位置
@@ -31,7 +35,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 任务栏图标未读交互：set 同步未读数角标（Windows 覆盖图标 / macOS Dock），flash 新消息时闪烁任务栏
   badge: {
-    set: (count) => ipcRenderer.invoke('app:badge:set', { count }),
+    // 支持 { count } 或 { count, dot: true }（L7 灰点角标）；兼容旧调用直接传数字
+    set: (arg) => ipcRenderer.invoke('app:badge:set', typeof arg === 'object' && arg !== null ? arg : { count: arg }),
     flash: () => ipcRenderer.invoke('app:badge:flash'),
   },
   // 安全令牌存储（safeStorage 系统级加密）
@@ -57,11 +62,14 @@ contextBridge.exposeInMainWorld('store', {
   conversations: {
     list: () => ipcRenderer.invoke('store:conversations:list'),
     upsert: (convs) => ipcRenderer.invoke('store:conversations:upsert', { convs }),
-    bump: (convId, lastMsg, lastMsgTime) =>
-      ipcRenderer.invoke('store:conversations:bump', { convId, lastMsg, lastMsgTime }),
+    bump: (convId, lastMsg, lastMsgTime, senderUid, senderName) =>
+      ipcRenderer.invoke('store:conversations:bump', { convId, lastMsg, lastMsgTime, senderUid, senderName }),
     setUnread: (convId, unread) => ipcRenderer.invoke('store:conversations:set-unread', { convId, unread }),
+    setMarkedUnread: (convId, flag) => ipcRenderer.invoke('store:conversations:set-marked-unread', { convId, flag }),
     updateSyncSeq: (convId, seq) => ipcRenderer.invoke('store:conversations:update-sync-seq', { convId, seq }),
     setNoPersist: (convId, flag) => ipcRenderer.invoke('store:conversations:set-no-persist', { convId, flag }),
+    setDraft: (convId, draft) => ipcRenderer.invoke('store:conversations:set-draft', { convId, draft }),
+    setSettings: (convId, settings) => ipcRenderer.invoke('store:conversations:set-settings', { convId, ...settings }),
     remove: (convId) => ipcRenderer.invoke('store:conversations:remove', { convId }),
   },
   messages: {
@@ -78,6 +86,8 @@ contextBridge.exposeInMainWorld('store', {
     // 语音已播放标记（未读红点持久化在消息表 voice_played 字段）
     markVoicePlayed: (serverId) => ipcRenderer.invoke('store:messages:mark-voice-played', { serverId }),
     removeByConv: (convId) => ipcRenderer.invoke('store:messages:remove-by-conv', { convId }),
+    // 批量删除消息（多选删除，仅本地视角）：ids = { serverIds, localIds }
+    deleteMany: (convId, ids) => ipcRenderer.invoke('store:messages:delete-many', { convId, ...ids }),
   },
   kv: {
     get: (key) => ipcRenderer.invoke('store:kv:get', { key }),

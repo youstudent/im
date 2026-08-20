@@ -10,6 +10,7 @@ import GroupProfilePanel from './GroupProfilePanel.vue'
 import InviteMembersModal from './InviteMembersModal.vue'
 import LeaveGroupConfirm from './LeaveGroupConfirm.vue'
 import GroupSettingsModal from './GroupSettingsModal.vue'
+import ForwardPickerModal from './ForwardPickerModal.vue'
 import { messageApi } from '../api/message'
 import { wsClient } from '../api/ws'
 import { friendApi, groupApi } from '../api/social'
@@ -21,7 +22,7 @@ import {
 } from '../utils/format'
 import {
   messagePreview, convLastPreview, isHiddenLeaveMsg, toDbMessage, toConvItem,
-  createMessageMapper, isAudioMsg, isVideoMsg,
+  createMessageMapper, isAudioMsg, isVideoMsg, msgTypeLabel,
 } from '../utils/message'
 import { CONTACT_COLORS } from '../utils/palette'
 import { useToast } from '../composables/useToast'
@@ -31,6 +32,7 @@ import { useGroupPanel } from '../composables/useGroupPanel'
 import { useMediaPreview } from '../composables/useMediaPreview'
 import { useStagedFiles } from '../composables/useStagedFiles'
 import { useMessageMenu } from '../composables/useMessageMenu'
+import { useConvMenu } from '../composables/useConvMenu'
 
 // 父组件传入的弹窗开关控制 + 跳转回调
 const props = defineProps({
@@ -43,11 +45,15 @@ const props = defineProps({
     type: String,
     default: null,
   },
+  // 待发起语音通话目标（通讯录点击"语音通话"传入的联系人 uid）：打开会话后发起通话
+  pendingVoiceCall: {
+    type: String,
+    default: null,
+  },
 })
 const emit = defineEmits(['update:showSearchHistory', 'close-search', 'update:chat-badge', 'request-add-friend', 'group-created'])
 
 const message = ref('')
-const muteDnd = ref(true)
 
 // ---- "查找聊天记录"弹窗 ----
 // 通过 props.showSearchHistory 控制；点击结果项后通知父组件跳转；仅搜当前会话
@@ -68,6 +74,12 @@ function toggleProfile() {
   showProfile.value = !showProfile.value
 }
 
+// 资料面板打开时，点击聊天区（消息列表/输入区等）自动关闭面板。
+// 头部"更多"按钮用 @click.stop 阻止冒泡，保证其开关切换不受影响
+function onChatAreaClick() {
+  if (showProfile.value) showProfile.value = false
+}
+
 // 资料面板"发消息"：关闭当前资料面板并聚焦输入框，直接进入输入状态
 function sendMessageAction() {
   showProfile.value = false
@@ -79,15 +91,27 @@ function sendMessageAction() {
 // ---- 会话数据 ----
 const conversations = ref([])
 
-// 总未读消息数（用于左侧导航栏聊天按钮的气泡）
+// 总未读消息数（用于左侧导航栏聊天按钮的气泡）：免打扰会话不计入（微信行为：
+// muted 变化是响应式的，开启/取消免打扰时气泡会自动重算）
 const totalUnread = computed(() =>
-  conversations.value.reduce((sum, c) => sum + (c.unread || 0), 0)
+  conversations.value.reduce((sum, c) => sum + (c.muted ? 0 : (c.unread || 0)), 0)
 )
-watch(totalUnread, (n) => {
-  emit('update:chat-badge', n)
+// L7 托盘角标区分：免打扰会话只贡献灰点、不贡献数字——
+// 非免打扰未读 > 0 → 数字角标；否则免打扰未读 > 0 → 灰点角标；两者皆 0 → 清除
+const mutedUnread = computed(() =>
+  conversations.value.reduce((sum, c) => sum + (c.muted ? (c.unread || 0) : 0), 0)
+)
+watch([totalUnread, mutedUnread], ([active, muted]) => {
+  emit('update:chat-badge', active)
   // 任务栏图标角标：未读数同步给主进程（Windows 覆盖图标 / macOS Dock 徽章，0 清除）
   try {
-    window.electronAPI?.badge?.set(n)
+    if (active > 0) {
+      window.electronAPI?.badge?.set({ count: active })
+    } else if (muted > 0) {
+      window.electronAPI?.badge?.set({ count: 0, dot: true })
+    } else {
+      window.electronAPI?.badge?.set({ count: 0 })
+    }
   } catch {}
 }, { immediate: true })
 
@@ -107,6 +131,39 @@ const hasActiveContact = computed(() => !!currentContact.value.id)
 
 // 是否为群聊会话（群聊中对方消息需展示发送者昵称）
 const isGroupChat = computed(() => currentContact.value.type === 'group')
+
+// G8 群禁言态：本人被禁言（个人禁言未过期 / 全员禁言且非群主管理员）时输入框禁用
+const chatInputDisabled = computed(() => {
+  if (!isGroupChat.value) return false
+  const info = gp.groupInfo || {}
+  // 个人禁言：myMutedUntil 未过期（管理员也不豁免个人禁言）
+  if (info.myMutedUntil && Number(info.myMutedUntil) > Date.now()) return true
+  // 全员禁言：仅群主/管理员可发言
+  if (Number(info.muteAll) === 1 && (info.myRole == null || info.myRole > 1)) return true
+  return false
+})
+const chatInputPlaceholder = computed(() => {
+  if (!chatInputDisabled.value) return '输入消息…'
+  const info = gp.groupInfo || {}
+  if (info.myMutedUntil && Number(info.myMutedUntil) > Date.now()) return '你已被禁言，暂时无法发言'
+  if (Number(info.muteAll) === 1) return '群主开启了全员禁言，仅群主/管理员可发言'
+  return '输入消息…'
+})
+
+// 聊天头部标题：群聊追加成员数（微信风格 "群名 (N)"）；
+// 成员数取已加载的真实群成员，未加载完成前不拼避免错误数字；
+// 名称自带 "(N)" 后缀（历史 mock 数据）时先剥离再拼，防重复；
+// 注意 contactMeta 是 computed ref，脚本内必须 .value 解包（模板才自动解包）
+const chatTitle = computed(() => {
+  if (!hasActiveContact.value) return 'WorkChat'
+  const base = String(contactMeta.value.name || '').replace(/\s*\(\d+\)\s*$/, '')
+  if (!isGroupChat.value) return base
+  const count = gp.liveGroupMembers.length || 0
+  return count > 0 ? `${base} (${count})` : base
+})
+
+// 聊天头部副标题：已废弃（单聊只展示一个名字：备注优先，无备注才展示昵称，
+// 由会话名称本身承载，不再额外展示副标题）
 
 // 当前会话的消息列表
 const currentMessages = computed(() => currentContact.value.messages ?? [])
@@ -235,8 +292,41 @@ const staged = reactive(useStagedFiles({
   activeId, hasActiveContact, currentContact, realConvMap, showToast, sendMessage,
 }))
 const msgMenuApi = reactive(useMessageMenu({
-  realConvMap, activeId, message, inputFieldEl, autoResizeInput, refreshConvPreview,
+  realConvMap, activeId, message, inputFieldEl, autoResizeInput, refreshConvPreview, startQuote,
 }))
+// 会话列表右键菜单（置顶/免打扰/标记未读/删除）：本地即时生效 + 服务端同步，失败回滚
+const convMenuApi = reactive(useConvMenu({ showToast, reorderConversations, deleteConv: deleteConvLocal }))
+
+// 删除会话：本地即时清理（列表项 + 本地库消息/会话行 + 映射），再删服务端会话视图行；
+// 服务端仅删视图保留消息，再次收发消息自动重建，故失败仅提示不回滚
+async function deleteConvLocal(conv) {
+  const convIdStr = conv.convId ? String(conv.convId) : ''
+  conversations.value = conversations.value.filter((x) => x.id !== conv.id)
+  if (convIdStr) {
+    localdb.messages.removeByConv(convIdStr)
+    localdb.conversations.remove(convIdStr)
+    noPersistSet.value.delete(convIdStr)
+  }
+  delete realConvMap.value[conv.id]
+  if (activeId.value === conv.id) {
+    activeId.value = ''
+    showProfile.value = false
+  }
+  if (conv.convId) {
+    try {
+      await messageApi.deleteConversation(conv.convId)
+    } catch (e) {
+      showToast(e.message || '服务端会话删除失败（本地已删除）', 'error')
+    }
+  }
+}
+
+// 资料面板“消息免打扰”开关：与当前会话 muted 状态双向同步（切换会话自动跟随），
+// 写入走右键菜单同一链路（本地即时生效 + 服务端同步，失败回滚），两处开关状态始终一致
+const muteDnd = computed({
+  get: () => !!currentContact.value.muted,
+  set: (v) => convMenuApi.applySettings(currentContact.value, { muted: !!v }),
+})
 
 // ---- 好友备注 ----
 // 好友备注信息（target_uid → { remark, nickname }）：buildContactMap 时同步填充，
@@ -264,6 +354,12 @@ async function saveRemark(draft) {
     const nickname = (info && info.nickname) || ''
     friendRemarkMap.value[String(targetUid)] = { remark, nickname }
     const displayName = remark || nickname
+    // 同步备注变更到群成员列表：群资料面板成员名/@候选/成员搜索备注优先即时生效
+    const gm = (gp.liveGroupMembers || []).find((x) => String(x.uid) === String(targetUid))
+    if (gm) {
+      gm.remark = remark
+      gm.name = remark || gm.nickname || gm.userNickname || gm.name
+    }
     if (displayName) {
       conversations.value.forEach((c) => {
         if (c.type !== 'group' && String(c.targetId) === String(targetUid)) c.name = displayName
@@ -284,10 +380,43 @@ async function saveRemark(draft) {
   }
 }
 
-// 群聊发送者展示名：发送者是我的好友时优先展示我给他的备注，无备注回落服务端昵称
+// 群聊发送者展示名（微信优先级）：好友备注 > 群内昵称 > 服务端昵称
 function friendDisplayName(uid, fallback) {
   const info = uid ? friendRemarkMap.value[String(uid)] : null
-  return (info && info.remark) || fallback || ''
+  if (info && info.remark) return info.remark
+  if (uid) {
+    const m = (gp.liveGroupMembers || []).find((x) => String(x.uid) === String(uid))
+    if (m && m.nickname) return m.nickname
+  }
+  return fallback || ''
+}
+
+// 引用块发送者展示名：自己发的被引消息固定显示“我”，其余走备注优先解析，
+// 保证修改好友备注后已渲染的引用名称同步刷新
+function quoteDisplayName(uid, fallback) {
+  if (uid && String(uid) === String(meUid())) return '我'
+  return friendDisplayName(uid, fallback)
+}
+
+// 会话列表最后消息发送者字段维护：同时重置 [有人@我] 标记（仅 WS 接收路径另行置位）
+// 自己发送记自己 uid（渲染时等于 meUid 不加前缀）；系统/撤回传 0
+function setConvLastSender(c, uid, name) {
+  c.lastSenderUid = Number(uid) || 0
+  c.lastSenderName = name || ''
+  c.lastMentionMe = false
+}
+
+// 会话列表最后消息展示：群聊且非自己发送时拼 "发送者: 内容" 前缀；
+// 发送者名称走 friendDisplayName 动态解析（备注 > 群昵称 > 真实昵称快照），
+// 备注/群昵称变化时渲染自动刷新，无需回写历史数据
+function convListPreview(c) {
+  const mention = c.lastMentionMe ? '[有人@我] ' : ''
+  const base = c.lastMessage || ''
+  if (c.type === 'group' && c.lastSenderUid && String(c.lastSenderUid) !== String(meUid())) {
+    const name = friendDisplayName(c.lastSenderUid, c.lastSenderName)
+    if (name) return mention + name + ': ' + base
+  }
+  return mention + base
 }
 
 function meUid() {
@@ -507,27 +636,45 @@ async function jumpToMessage({ conversationId, messageId, seq }) {
   }, 80)
 }
 
+// ---- 草稿（微信风格：切换会话不丢输入内容，列表红色 [草稿] 前缀；纯本地不同步服务端）----
+// 把输入框内容存为指定会话草稿（空内容清除）；同时更新内存会话项与本地库
+function saveDraftFor(contactId, text) {
+  const c = conversations.value.find((x) => x.id === contactId)
+  if (!c) return
+  const draft = (text || '').trim() ? String(text) : ''
+  c.draft = draft
+  if (c.convId) localdb.conversations.setDraft(String(c.convId), draft)
+}
+
 // ---- 切换会话 ----
 function selectConversation(id) {
   if (id === activeId.value) return // 已选中，无需切换
   switchConversation(id)
 }
 
-// 通讯录"发消息"/"进入"跳转：父组件传入 openConversation 时，切换到对应会话。
+// 通讯录"发消息"/"进入"/"语音通话"跳转：父组件传入 openConversation 时，切换到对应会话。
 // 通讯录传的是对方 uid（单聊）/ 群 g_uid（群聊），而会话列表项 id 为 `conv-${conv_id}`，
 // 需先按 targetId 映射；尚无会话（从未聊过）时创建占位会话并选中。
 watch(
   () => props.openConversation,
-  (id) => {
+  async (id) => {
     if (!id) return
     const key = String(id)
     const target = conversations.value.find((c) => String(c.targetId) === key)
     if (target) {
-      if (target.id === activeId.value) return // 已选中同一会话，无需切换
-      switchConversation(target.id)
-      return
+      if (target.id !== activeId.value) await switchConversation(target.id)
+    } else {
+      await openPlaceholderConversation(key)
     }
-    openPlaceholderConversation(key)
+    // 通讯录"语音通话"跳转：会话就绪后立即发起语音通话
+    // （群聊/通话进行中/服务器未连接等场景由 startVoiceCall 内部 toast 提示）
+    if (
+      props.pendingVoiceCall &&
+      String(props.pendingVoiceCall) === key &&
+      String(currentContact.value.targetId) === key
+    ) {
+      call.startVoiceCall()
+    }
   }
 )
 
@@ -547,6 +694,9 @@ async function openPlaceholderConversation(targetKey) {
     online: false,
     type: info.type || null,
     lastMessage: '',
+    lastSenderUid: 0,
+    lastSenderName: '',
+    lastMentionMe: false,
     time: '',
     lastMsgTime: 0,
     unread: 0,
@@ -572,6 +722,16 @@ async function switchConversation(id) {
 
   // 关闭可能打开的消息操作菜单
   msgMenuApi.closeMsgMenu()
+  convMenuApi.closeConvMenu()
+
+  // 切换前把当前输入框内容存为旧会话草稿（含清空场景：空内容会清除旧草稿）
+  if (activeId.value && activeId.value !== id) saveDraftFor(activeId.value, message.value)
+  // 引用与 @提及均为会话内临时状态：切换会话时重置（微信行为）
+  quoteDraft.value = null
+  mentionPopup.show = false
+  // 多选模式同样不跨会话保留
+  multiSel.on = false
+  multiSel.ids = []
 
   // 1) 淡出当前消息区
   transitionState.value = 'leaving'
@@ -580,10 +740,17 @@ async function switchConversation(id) {
   await new Promise((resolve) => {
     // 短暂延迟，让离开过渡可见
     setTimeout(async () => {
-      // 2) 更新选中会话并清零未读（同步清零本地库，保持未读一致）
+      // 2) 更新选中会话并清零未读（同步清零本地库，保持未读一致）；打开会话同时清除手动标记未读
       activeId.value = id
       target.unread = 0
       if (target.convId) localdb.conversations.setUnread(String(target.convId), 0)
+      if (target.markedUnread) {
+        target.markedUnread = false
+        if (target.convId) localdb.conversations.setMarkedUnread(String(target.convId), 0)
+      }
+      // 恢复新会话草稿到输入框（无草稿则清空）
+      message.value = target.draft || ''
+      nextTick(() => autoResizeInput())
 
       // 3) 进入“加载中”状态
       chatLoading.value = true
@@ -663,6 +830,7 @@ async function loadConversationMessages(target, { prepend = false } = {}) {
       target.messages = localRows.map((r) => mapLocalMessage(r, target.convId))
       const last = target.messages[target.messages.length - 1]
       target.lastMessage = convLastPreview(last)
+      setConvLastSender(target, last.type === 'out' ? meUid() : last.senderUid, last.senderName)
       target.time = formatConvTime(last.createdAt || target.lastMsgTime)
       target.lastMsgTime = last.createdAt || target.lastMsgTime || 0
       target.oldestSeq = target.messages.find((m) => m.seq)?.seq || 0
@@ -759,6 +927,7 @@ async function loadConversationMessages(target, { prepend = false } = {}) {
       // 会话摘要用与后端一致的预览：图片/文件消息不显示原始 URL；
       // 最后一条若是撤回消息，显示"你/对方撤回了一条消息"（与撤回逻辑一致，避免被撤回原文出现在列表）
       target.lastMessage = convLastPreview(last)
+      setConvLastSender(target, last.type === 'out' ? meUid() : last.senderUid, last.senderName)
       target.time = formatConvTime(last.createdAt || target.lastMsgTime)
       // 优先用后端会话时间，消息时间为 0 时兜底保留
       target.lastMsgTime = last.createdAt || target.lastMsgTime || 0
@@ -852,8 +1021,17 @@ async function send() {
   if (!value && !stagedList.length) return
   closeEmojiPanel()
   if (value) {
-    await sendMessage(MSG_TYPE.TEXT, value, null)
+    // 组装 extra：引用快照（quote）+ @提及 uid 列表（mention_uids，仅群聊）
+    const extra = {}
+    if (quoteDraft.value) extra.quote = quoteDraft.value
+    const mentionUids = collectMentions(value)
+    if (mentionUids.length) extra.mention_uids = mentionUids
+    await sendMessage(MSG_TYPE.TEXT, value, Object.keys(extra).length ? extra : null)
     message.value = ''
+    // 发出消息后清除该会话草稿与引用态（微信行为：草稿/引用仅存在于未发送时）
+    saveDraftFor(activeId.value, '')
+    quoteDraft.value = null
+    mentionPopup.show = false
     autoResizeInput()
   }
   if (stagedList.length) {
@@ -915,6 +1093,7 @@ async function sendMessage(type, content, extra, options = {}) {
     contact.messages.push(optimistic)
     // 会话列表摘要：统一走 messagePreview（音频后缀的文件识别为 [语音]，与气泡/后端一致）
     contact.lastMessage = messagePreview(optimistic)
+    setConvLastSender(contact, meUid(), '')
     contact.lastMsgTime = optimistic.createdAt
     contact.time = formatConvTime(optimistic.createdAt)
     scrollToBottom()
@@ -1008,6 +1187,573 @@ async function sendMessage(type, content, extra, options = {}) {
   }
   contact.messages.push(mockMsg)
   contact.lastMessage = messagePreview(mockMsg)
+  setConvLastSender(contact, meUid(), '')
+}
+
+// ---- 引用回复（微信风格：右键引用 → 输入区引用条 → 发送携带 extra.quote）----
+// 被引消息快照：{ msg_id, seq, sender_uid, sender_name, type, content }（content 截断 100 字，extra 有 2KB 上限）
+const quoteDraft = ref(null)
+
+// 输入区引用条文案：非文本被引消息展示类型占位
+const quoteBarText = computed(() => {
+  const q = quoteDraft.value
+  if (!q) return ''
+  const summary = Number(q.type) === 1 ? q.content : msgTypeLabel(Number(q.type))
+  return `${q.sender_name || '对方'}：${summary}`
+})
+
+// ---- 群公告强提醒（G11）：收到 group.announcement 事件后，打开该群会话时顶部横幅展示 ----
+// 待展示公告（g_uid → 公告内容）：事件到达时记录，打开对应群会话时展示；公告再次更新覆盖旧内容
+const pendingAnnounceMap = ref({})
+// 已关闭横幅的群（本次会话内不再弹，除非公告再次更新）
+const dismissedAnnounceSet = new Set()
+// 当前会话的横幅内容：仅当前群有待展示公告且未关闭时非空
+const announceBanner = computed(() => {
+  const c = currentContact.value
+  if (!c || c.type !== 'group' || !c.targetId) return ''
+  const key = String(c.targetId)
+  if (dismissedAnnounceSet.has(key)) return ''
+  return pendingAnnounceMap.value[key] || ''
+})
+// 关闭公告横幅
+function dismissAnnounceBanner() {
+  const c = currentContact.value
+  if (c && c.targetId) dismissedAnnounceSet.add(String(c.targetId))
+}
+
+// 构建引用快照并进入引用态（由消息菜单“引用”触发）；快照为发送时点的原文副本，
+// 被引消息后续撤回/删除不做级联清理（写扩散成本高，点击定位时可见撤回提示行）
+function startQuote(msg) {
+  if (!msg) return
+  const isText = Number(msg.msgType) === MSG_TYPE.TEXT || !msg.msgType
+  quoteDraft.value = {
+    msg_id: String(msg.id),
+    seq: Number(msg.seq) || 0,
+    sender_uid: msg.type === 'out' ? String(meUid()) : String(msg.senderUid || ''),
+    sender_name: msg.type === 'out' ? '我' : (msg.senderName || '对方'),
+    type: Number(msg.msgType) || 1,
+    content: isText ? String(msg.text || '').slice(0, 100) : '',
+  }
+  nextTick(() => inputFieldEl.value?.focus())
+}
+
+function clearQuote() {
+  quoteDraft.value = null
+}
+
+// 点击气泡内引用块：定位到被引消息（复用搜索跳转链路：未加载时逐页回补/拉窗口）
+function onQuoteJump(quote) {
+  if (!quote || !quote.msg_id) return
+  jumpToMessage({ conversationId: activeId.value, messageId: String(quote.msg_id), seq: quote.seq })
+}
+
+// ---- @提及（仅群聊：输入 @ 弹成员选择 → 插入 @名字 → 发送时收集 mention_uids）----
+const mentionPopup = reactive({
+  show: false,   // 弹层是否展示
+  query: '',     // @ 后已输入的过滤关键字
+  anchor: -1,    // @ 字符在输入文本中的位置
+  active: 0,     // 键盘导航选中项
+})
+
+// 候选成员：当前群成员按关键字过滤（展示名含备注优先，与插入文本一致）；
+// 排除自己：不允许 @自己；G2：群主/管理员候选顶部固定展示"所有人"
+const mentionCandidates = computed(() => {
+  if (!isGroupChat.value) return []
+  const q = mentionPopup.query.toLowerCase()
+  const me = String(meUid())
+  const list = (gp.groupMeta.members || [])
+    .filter((m) => m.uid != null && String(m.uid) !== me)
+    .filter((m) => !q || String(m.name || '').toLowerCase().includes(q))
+  const canAtAll = (gp.groupInfo.myRole ?? 2) <= 1
+  const atAll =
+    canAtAll && (!q || '所有人'.includes(q))
+      ? [{ uid: 'all', name: '所有人', avatar: '全', color: '#2563eb', isAll: true }]
+      : []
+  return [...atAll, ...list].slice(0, 8)
+})
+
+// 输入时检测 @ 上下文：光标前最近的 @ 处于词首（行首/空白后）且后续无空白时开弹层
+function detectMention() {
+  const el = inputFieldEl.value
+  if (!isGroupChat.value || !el) {
+    mentionPopup.show = false
+    return
+  }
+  const pos = el.selectionStart ?? message.value.length
+  const text = message.value.slice(0, pos)
+  const at = text.lastIndexOf('@')
+  if (at < 0 || (at > 0 && !/\s/.test(text[at - 1]))) {
+    mentionPopup.show = false
+    return
+  }
+  const query = text.slice(at + 1)
+  // @ 后已输入空白：视为提及输入结束，收起弹层
+  if (/\s/.test(query)) {
+    mentionPopup.show = false
+    return
+  }
+  mentionPopup.show = true
+  mentionPopup.query = query
+  mentionPopup.anchor = at
+  mentionPopup.active = 0
+}
+
+// 选中成员插入 @名字（替换 @ 到光标的过滤文本），光标移到插入内容后
+function insertMention(member) {
+  if (!member) return
+  const el = inputFieldEl.value
+  const start = mentionPopup.anchor
+  const cur = el ? el.selectionStart : message.value.length
+  const before = message.value.slice(0, start)
+  const after = message.value.slice(cur)
+  // G2 @所有人：插入固定文本"@所有人 "（uid 标记 all，发送时收集为 ["all"]）
+  const insertName = member.isAll ? '所有人' : member.name
+  message.value = `${before}@${insertName} ${after}`
+  mentionPopup.show = false
+  nextTick(() => {
+    if (el) {
+      const pos = before.length + String(insertName).length + 2 // @名字 + 尾随空格
+      el.focus()
+      el.setSelectionRange(pos, pos)
+      autoResizeInput()
+    }
+  })
+}
+
+// 输入框键入：高度自适应 + @ 弹层检测 + 发送正在输入帧（S7，仅单聊）
+function onInputTyping() {
+  autoResizeInput()
+  detectMention()
+  sendTypingNow()
+}
+
+// 粘贴截图发送：paste 事件携带图片时直接暂存（走图片发送链路）；
+// 事件无图片且无文本时兼底读 Electron 主进程剪贴板（部分截图工具格式特殊）
+async function onInputPaste(e) {
+  const dt = e.clipboardData
+  if (!dt) return
+  const item = [...(dt.items || [])].find((it) => String(it.type || '').startsWith('image/'))
+  const file = item && item.getAsFile ? item.getAsFile() : null
+  if (file) {
+    e.preventDefault()
+    staged.stageFiles([new File([file], file.name || `screenshot-${Date.now()}.png`, { type: file.type || 'image/png' })])
+    return
+  }
+  // 有文本：走默认粘贴；既无图片也无文本时才尝试主进程剪贴板
+  if (dt.getData('text')) return
+  try {
+    const dataUrl = await window.electronAPI?.clipboard?.readImage()
+    if (!dataUrl) return
+    e.preventDefault()
+    const blob = await (await fetch(dataUrl)).blob()
+    staged.stageFiles([new File([blob], `screenshot-${Date.now()}.png`, { type: 'image/png' })])
+  } catch {
+    /* 剪贴板不可用时静默降级为普通粘贴 */
+  }
+}
+
+// 弹层开启时的键盘导航：上/下选择、Tab 插入、Esc 关闭（Enter 由 onInputEnter 接管）
+function onInputKeydown(e) {
+  if (!mentionPopup.show) return
+  const list = mentionCandidates.value
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    if (list.length) mentionPopup.active = (mentionPopup.active + 1) % list.length
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (list.length) mentionPopup.active = (mentionPopup.active - 1 + list.length) % list.length
+  } else if (e.key === 'Tab') {
+    e.preventDefault()
+    if (list.length) insertMention(list[mentionPopup.active] || list[0])
+  } else if (e.key === 'Escape') {
+    mentionPopup.show = false
+  }
+}
+
+// “使用 Enter 发送”设置（设置页持久化到 localStorage）：关闭后 Enter 换行、Ctrl+Enter 发送
+function sendWithEnterEnabled() {
+  try {
+    return localStorage.getItem('workchat:send-with-enter') !== '0'
+  } catch {
+    return true
+  }
+}
+
+// 输入框回车：设置开启时拦截并走发送/插入 @ 流程；关闭时不拦截（默认插入换行）
+function onInputEnterKey(e) {
+  if (!sendWithEnterEnabled()) return
+  e.preventDefault()
+  onInputEnter()
+}
+
+// Ctrl+Enter：两种设置下均可发送（设置关闭时的发送快捷键）
+function onCtrlEnterSend(e) {
+  e.preventDefault()
+  onInputEnter()
+}
+
+// 回车：@ 弹层开启时插入选中成员，否则发送消息
+function onInputEnter() {
+  if (mentionPopup.show) {
+    const list = mentionCandidates.value
+    if (list.length) insertMention(list[mentionPopup.active] || list[0])
+    else mentionPopup.show = false
+    return
+  }
+  send()
+}
+
+// 从文本收集被 @ 的成员 uid：@xxx 片段与群成员展示名匹配（弹层插入的 @名字 必然命中；
+// 手打的 @名字 同名也命中）；未命中的纯文本 @ 不进 mention_uids（不触发提醒）
+function collectMentions(text) {
+  if (!isGroupChat.value || !text) return []
+  const names = [...String(text).matchAll(/@([^\s@]+)/g)].map((m) => m[1])
+  if (!names.length) return []
+  // G2 @所有人：命中文本 @所有人 → 返回 ["all"] 特殊标记（服务端校验角色并展开为全成员通知）
+  if (names.includes('所有人')) return ['all']
+  const members = gp.groupMeta.members || []
+  const uids = []
+  for (const name of names) {
+    const hit = members.find((m) => m.name === name)
+    if (hit && !uids.includes(String(hit.uid))) uids.push(String(hit.uid))
+  }
+  return uids
+}
+
+// 消息是否 @ 了我（接收帧 extra.mention_uids 含自己 uid）：用于强提醒与 [有人@我] 摘要
+// G2：含 "all" 标记时对所有群成员视为 @我（服务端仅推送通知，摘要/强提醒在此判断）
+function isMentionMe(mapped) {
+  const ids = mapped && mapped.extra && mapped.extra.mention_uids
+  if (!Array.isArray(ids) || !ids.length) return false
+  const me = String(meUid())
+  return ids.some((u) => {
+    const s = String(u)
+    return s === me || s.toLowerCase() === 'all'
+  })
+}
+
+// ---- S6 表情回应 ----
+// 原始 reactions（[{uid, emoji, time}]）→ 聚合展示 [{emoji, count, mine}]
+function aggregateReactions(msg) {
+  const list = Array.isArray(msg.reactions) ? msg.reactions : []
+  if (!list.length) return []
+  const me = String(meUid())
+  const map = new Map()
+  for (const r of list) {
+    const key = String(r.emoji || '')
+    if (!key) continue
+    const e = map.get(key) || { emoji: key, count: 0, mine: false }
+    e.count++
+    if (String(r.uid) === me) e.mine = true
+    map.set(key, e)
+  }
+  return [...map.values()]
+}
+
+// 添加/取消表情回应：本地乐观更新 + WS 优先发送（失败 HTTP 兜底）
+async function onReact(msg, { emoji, add }) {
+  if (!msg || msg.status === 1) return
+  const me = String(meUid())
+  const convId = realConvMap.value[activeId.value] || currentContact.value.convId || 0
+  if (!convId || !msg.id) return
+  // 本地乐观更新（幂等：同一 emoji 重复添加不重复计数）
+  msg.reactions = msg.reactions || []
+  if (add) {
+    if (!msg.reactions.some((r) => String(r.uid) === me && r.emoji === emoji)) {
+      msg.reactions.push({ uid: me, emoji, time: Math.floor(Date.now() / 1000) })
+    }
+  } else {
+    msg.reactions = msg.reactions.filter((r) => !(String(r.uid) === me && r.emoji === emoji))
+  }
+  // 服务端同步：WS 优先，未发出（断线）时 HTTP 兜底
+  const sent = wsClient.sendReaction(convId, msg.id, emoji, add)
+  if (!sent) {
+    try {
+      await messageApi.setReaction(convId, msg.id, emoji, add)
+    } catch (e) {
+      showToast(e.message || '表情回应失败', 'error')
+    }
+  }
+}
+
+// 收到 reaction 帧（其他成员添加/移除）：按 conv_id+msg_id 找到消息就地更新
+function onWsReaction(data) {
+  if (!data || data.msg_id == null || data.conv_id == null) return
+  const convIdStr = String(data.conv_id)
+  const msgIdStr = String(data.msg_id)
+  const uidStr = String(data.uid)
+  const emoji = String(data.emoji || '')
+  if (!emoji) return
+  const conv = conversations.value.find((c) => String(c.convId || realConvMap.value[c.id] || '') === convIdStr)
+  if (!conv || !Array.isArray(conv.messages)) return
+  const msg = conv.messages.find((m) => String(m.id) === msgIdStr || String(m.serverId || '') === msgIdStr)
+  if (!msg) return
+  msg.reactions = msg.reactions || []
+  if (data.add) {
+    if (!msg.reactions.some((r) => String(r.uid) === uidStr && r.emoji === emoji)) {
+      msg.reactions.push({ uid: uidStr, emoji, time: Math.floor(Date.now() / 1000) })
+    }
+  } else {
+    msg.reactions = msg.reactions.filter((r) => !(String(r.uid) === uidStr && r.emoji === emoji))
+  }
+}
+
+// ---- S7 正在输入（仅单聊） ----
+const typingPeer = reactive({ convId: '', at: 0 })
+let typingClearTimer = null
+// 输入时发送 typing 帧（节流在 ws.js 内）：仅单聊
+function sendTypingNow() {
+  if (isGroupChat.value) return
+  const convId = realConvMap.value[activeId.value] || currentContact.value.convId || 0
+  if (convId) wsClient.sendTyping(convId)
+}
+// 收到 typing 帧：记录对端会话与时间，3s 无新帧自动清除
+function onWsTyping(data) {
+  if (!data || !data.conv_id) return
+  typingPeer.convId = String(data.conv_id)
+  typingPeer.at = Date.now()
+  if (typingClearTimer) clearTimeout(typingClearTimer)
+  typingClearTimer = setTimeout(() => {
+    typingPeer.convId = ''
+    typingPeer.at = 0
+  }, 3000)
+}
+// 当前会话头部是否显示"对方正在输入…"：单聊 + 对端会话匹配 + 3s 内
+const typingVisible = computed(() => {
+  if (isGroupChat.value || !typingPeer.convId) return false
+  const convId = realConvMap.value[activeId.value] || currentContact.value.convId || ''
+  return String(convId) === typingPeer.convId && Date.now() - typingPeer.at < 3000
+})
+
+// ---- G14 群已读人数（仅群主/管理员视角，企业微信策略） ----
+const isGroupAdminNow = computed(() => isGroupChat.value && (gp.groupInfo.myRole ?? 2) <= 1)
+// 对给定消息列表批量查询已读人数（最近 50 条非乐观消息，并发查询）
+async function refreshReadCounts(convId, msgs) {
+  if (!convId || !isGroupAdminNow.value) return
+  const list = (Array.isArray(msgs) ? msgs : [])
+    .filter((m) => m.id && !String(m.id).startsWith('tmp-') && m.status !== 1)
+    .slice(-50)
+  if (!list.length) return
+  const results = await Promise.allSettled(
+    list.map((m) => messageApi.readCount(convId, m.id).then((r) => ({ id: String(m.id), count: Number(r && r.count) || 0 })))
+  )
+  results.forEach((res, i) => {
+    if (res.status === 'fulfilled') list[i].readCount = res.value.count
+  })
+}
+// 当前会话消息变化时（打开会话/收到新消息）节流触发已读人数查询
+let readCountTimer = null
+watch(
+  () => (currentContact.value && currentContact.value.messages || []).length,
+  () => {
+    if (!isGroupAdminNow.value) return
+    if (readCountTimer) clearTimeout(readCountTimer)
+    readCountTimer = setTimeout(() => {
+      const convId = realConvMap.value[activeId.value] || currentContact.value.convId || 0
+      refreshReadCounts(convId, currentContact.value.messages || [])
+    }, 600)
+  }
+)
+
+// ---- 多选模式（微信风格：右键多选 → 勾选消息 → 逐条转发 / 合并转发 / 删除） ----
+const multiSel = reactive({ on: false, ids: [] })
+const showForwardPicker = ref(false)
+const forwardBusy = ref(false)
+const forwardMode = ref('single') // single 逐条转发 / merge 合并转发（type=7 合并卡片）
+let pendingForwardMsgs = [] // 待转发消息快照（异步转发期间避免引用丢失）
+// 合并转发条目上限与单条摘要截断：服务端 content 上限 4000 字，JSON 摘要需留冗余
+const MERGE_MAX_ITEMS = 40
+const MERGE_ITEM_CHARS = 40
+// 合并转发详情弹层数据（点击合并卡片打开）
+const mergeDetail = ref(null)
+
+// 打开合并转发详情（由气泡 open-merge 事件触发）
+function onOpenMerge(data) {
+  if (data && Array.isArray(data.items) && data.items.length) mergeDetail.value = data
+}
+
+// 系统消息与已撤回消息不可多选
+function canMultiSelect(m) {
+  return !!m && !m.isSystem && m.status !== 1
+}
+
+function isMultiSelected(m) {
+  return !!m && multiSel.ids.includes(m.id)
+}
+
+function toggleMultiMsg(m) {
+  if (!canMultiSelect(m)) return
+  const i = multiSel.ids.indexOf(m.id)
+  if (i >= 0) multiSel.ids.splice(i, 1)
+  else multiSel.ids.push(m.id)
+}
+
+// 右键菜单“多选”入口：进入多选模式并选中右键的消息
+function enterMultiSelect() {
+  const msg = msgMenuApi.menuMsg
+  msgMenuApi.closeMsgMenu()
+  multiSel.on = true
+  multiSel.ids = canMultiSelect(msg) ? [msg.id] : []
+}
+
+function exitMultiSelect() {
+  multiSel.on = false
+  multiSel.ids = []
+}
+
+// 气泡点击入口：多选模式下改为勾选切换（不弹消息菜单）
+function onBubbleMenu(e, msg) {
+  if (multiSel.on) {
+    toggleMultiMsg(msg)
+    return
+  }
+  msgMenuApi.openMsgMenu(e, msg)
+}
+
+// 删除选中消息（仅本地视角，不影响对方）：内存列表与本地库同步删除
+function deleteMultiSel() {
+  const contact = currentContact.value
+  if (!contact || !multiSel.ids.length) return
+  if (!confirm(`删除选中的 ${multiSel.ids.length} 条消息？仅删除本机记录，不影响对方查看。`)) return
+  const sel = new Set(multiSel.ids)
+  const serverIds = []
+  const localIds = []
+  contact.messages.filter((m) => sel.has(m.id)).forEach((m) => {
+    if (String(m.id).startsWith('local-')) localIds.push(String(m.id).slice(6))
+    else serverIds.push(String(m.id))
+  })
+  contact.messages = contact.messages.filter((m) => !sel.has(m.id))
+  if (contact.convId) localdb.messages.deleteMany(String(contact.convId), { serverIds, localIds })
+  refreshConvPreview(contact.id)
+  exitMultiSelect()
+  showToast('已删除选中消息', 'success')
+}
+
+// 逐条转发：先弹目标会话选择，确认后把每条选中消息依次发往各目标会话
+function openForwardPicker() {
+  const contact = currentContact.value
+  if (!contact || !multiSel.ids.length) return
+  pendingForwardMsgs = contact.messages.filter((m) => multiSel.ids.includes(m.id))
+  if (!pendingForwardMsgs.length) return
+  forwardMode.value = 'single'
+  showForwardPicker.value = true
+}
+
+// 合并转发（S2）：选中消息合成一条 type=7 合并卡片消息发往目标会话
+function openMergeForwardPicker() {
+  const contact = currentContact.value
+  if (!contact || !multiSel.ids.length) return
+  pendingForwardMsgs = contact.messages.filter((m) => multiSel.ids.includes(m.id) && canMultiSelect(m))
+  if (!pendingForwardMsgs.length) return
+  forwardMode.value = 'merge'
+  showForwardPicker.value = true
+}
+
+// 合并转发消息内容：JSON { count, items:[{sender_name, type, content}] }（截断防爆）
+function buildMergeContent(msgs) {
+  const items = msgs.slice(0, MERGE_MAX_ITEMS).map((m) => ({
+    sender_name: m.type === 'out' ? '我' : (m.senderName || '对方'),
+    type: Number(m.msgType) || 1,
+    content: String(convLastPreview(m) || '').slice(0, MERGE_ITEM_CHARS),
+  }))
+  return JSON.stringify({ count: msgs.length, items })
+}
+
+// 发送合并转发消息到目标会话（HTTP 通道，与逐条转发同模式）
+async function forwardMergeMessage(target, msgs) {
+  const convId = realConvMap.value[target.id]
+  if (!convId) return false
+  const msgId = Date.now() + Math.floor(Math.random() * 1000)
+  try {
+    await messageApi.send({
+      conv_id: String(convId),
+      target_id: Number(target.targetId),
+      conv_type: target.type === 'group' ? 2 : 1,
+      type: MSG_TYPE.MERGE,
+      msg_id: String(msgId),
+      content: buildMergeContent(msgs),
+      extra: '',
+    })
+    const now = Math.floor(Date.now() / 1000)
+    target.lastMessage = msgTypeLabel(MSG_TYPE.MERGE)
+    setConvLastSender(target, meUid(), '')
+    target.lastMsgTime = now
+    target.time = formatConvTime(now)
+    return true
+  } catch (e) {
+    console.warn('[merge-forward] 发送失败:', e?.message || e)
+    return false
+  }
+}
+
+// 目标会话候选：排除当前会话与占位会话（无服务端 conv_id 不可发送）
+const forwardTargets = computed(() =>
+  conversations.value.filter(
+    (c) => c.id !== activeId.value && !String(c.id).startsWith('new-') && realConvMap.value[c.id]
+  )
+)
+
+// 转发单条消息到目标会话：HTTP 发送通道（转发低频）；extra 剥离本地缓存地址
+async function forwardOneMessage(target, m) {
+  const convId = realConvMap.value[target.id]
+  if (!convId) return false
+  const msgId = Date.now() + Math.floor(Math.random() * 1000)
+  const convType = target.type === 'group' ? 2 : 1
+  const type = Number(m.msgType) || 1
+  const extra = m.extra && typeof m.extra === 'object' ? { ...m.extra } : {}
+  delete extra.cacheUrl // 本地缓存地址（wcfile://）仅本机有效
+  try {
+    await messageApi.send({
+      conv_id: String(convId),
+      target_id: Number(target.targetId),
+      conv_type: convType,
+      type,
+      msg_id: String(msgId),
+      content: m.text || '',
+      extra: Object.keys(extra).length ? JSON.stringify(extra) : '',
+    })
+    // 更新目标会话摘要与排序（服务端推送随后也会到达，覆盖无害）
+    const now = Math.floor(Date.now() / 1000)
+    target.lastMessage = messagePreview({ msgType: type, text: m.text || '', extra })
+    setConvLastSender(target, meUid(), '')
+    target.lastMsgTime = now
+    target.time = formatConvTime(now)
+    return true
+  } catch (e) {
+    console.warn('[forward] 发送失败:', e?.message || e)
+    return false
+  }
+}
+
+async function onForwardConfirm(targetIds) {
+  showForwardPicker.value = false
+  const msgs = pendingForwardMsgs
+  pendingForwardMsgs = []
+  if (!msgs.length || !targetIds.length) return
+  forwardBusy.value = true
+  let failed = 0
+  try {
+    for (const tid of targetIds) {
+      const target = conversations.value.find((c) => c.id === tid)
+      if (!target) continue
+      if (forwardMode.value === 'merge') {
+        // 合并转发：每个目标会话合成一条合并卡片消息
+        const ok = await forwardMergeMessage(target, msgs)
+        if (!ok) failed++
+        continue
+      }
+      for (const m of msgs) {
+        const ok = await forwardOneMessage(target, m)
+        if (!ok) failed++
+      }
+    }
+    reorderConversations()
+    const doneText = forwardMode.value === 'merge' ? '合并转发完成' : '转发完成'
+    showToast(failed ? `${doneText}，${failed} 个失败` : doneText, failed ? 'error' : 'success')
+  } finally {
+    forwardBusy.value = false
+    exitMultiSelect()
+  }
 }
 
 // ---- 表情面板（状态在此，面板 UI 为 EmojiPanel 组件）----
@@ -1024,6 +1770,11 @@ function closeEmojiPanel() {
 
 // 点击表情：插入到输入框（保持光标位置）
 function insertEmoji(emoji) {
+  // G8 禁言保护：表情面板已在禁言后残留打开时，点击不再插入
+  if (chatInputDisabled.value) {
+    showEmojiPanel.value = false
+    return
+  }
   const el = inputFieldEl.value
   if (el) {
     const start = el.selectionStart ?? message.value.length
@@ -1150,8 +1901,10 @@ async function onWsMessage(msg) {
   hydrateMediaCache([mapped], msg.conv_id)
 
   // 新消息提醒：他人发来的普通消息（含群聊）；自己回显与撤回帧不提醒。
+  // 免打扰会话静默（微信行为：不弹通知不响铃，仅角标变化）；但被 @ 时穿透免打扰强提醒。
   // 提示音/桌面通知由设置页开关控制（notify.js 内部判断）
-  if (!isMine && msg.status !== 1) {
+  const mentionsMe = !isMine && msg.status !== 1 && isMentionMe(mapped)
+  if (!isMine && msg.status !== 1 && (!contact.muted || mentionsMe)) {
     const title =
       contact.type === 'group' && mapped.senderName ? `${contact.name}：${mapped.senderName}` : contact.name
     notifyNewMessage(title, messagePreview(mapped))
@@ -1185,8 +1938,16 @@ async function onWsMessage(msg) {
     return
   }
 
-  // 统一更新会话列表元信息（最后消息 + 时间），确保发送/接收后都刷新
+  // 统一更新会话列表元信息（最后消息 + 时间），确保发送/接收后都刷新；
+  // [有人@我] 改为独立标记，渲染时置于发送者前缀之前（微信顺序）
   contact.lastMessage = messagePreview(mapped)
+  setConvLastSender(contact, isMine ? meUid() : mapped.senderUid, mapped.senderName)
+  contact.lastMentionMe = mentionsMe
+  // 收到他人新消息：自动清除手动标记未读（微信行为）
+  if (!isMine && contact.markedUnread) {
+    contact.markedUnread = false
+    if (contact.convId) localdb.conversations.setMarkedUnread(String(contact.convId), 0)
+  }
   contact.time = formatConvTime(mapped.createdAt)
   contact.lastMsgTime = mapped.createdAt || Math.floor(Date.now() / 1000)
 
@@ -1286,24 +2047,31 @@ async function persistWsIncoming(msg, mapped, contact, isMine, isActive, countUn
   } else {
     localdb.messages.upsert([toDbMessage(msg, convIdStr)])
   }
-  // 更新会话摘要；未读仅在 countUnread 时推进（活跃会话切换时已清零，不重复累加）
+  // 更新会话摘要；未读仅在 countUnread 时推进（活跃会话切换时已清零，不重复累加）；
+  // 本地库存纯摘要 + 发送者字段（名称前缀由列表渲染时动态拼接）
   const preview = messagePreview(mapped)
+  const senderUid = isMine ? String(meUid()) : String(mapped.senderUid || '')
+  const senderName = mapped.senderName || ''
   if (isActive) {
     localdb.conversations.upsert([
-      { id: convIdStr, last_msg: preview, last_msg_time: mapped.createdAt, unread: 0 },
+      { id: convIdStr, last_msg: preview, last_msg_time: mapped.createdAt, unread: 0, last_sender_uid: senderUid, last_sender_name: senderName },
     ])
   } else if (countUnread) {
-    localdb.conversations.bump(convIdStr, preview, mapped.createdAt)
+    localdb.conversations.bump(convIdStr, preview, mapped.createdAt, senderUid, senderName)
   } else {
     // 不计未读（离线补推/自己回显）但摘要仍需更新；部分行 upsert 经 COALESCE 保留已有 unread
-    localdb.conversations.upsert([{ id: convIdStr, last_msg: preview, last_msg_time: mapped.createdAt }])
+    localdb.conversations.upsert([{ id: convIdStr, last_msg: preview, last_msg_time: mapped.createdAt, last_sender_uid: senderUid, last_sender_name: senderName }])
   }
 }
 
-// 按最后消息时间倒序重排会话列表（最新在最上）
+// 按最后消息时间倒序重排会话列表（置顶会话优先，同区内最新在最上）
 function reorderConversations() {
   const list = conversations.value
-  list.sort((a, b) => (b.lastMsgTime || 0) - (a.lastMsgTime || 0))
+  list.sort(
+    (a, b) =>
+      ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) ||
+      ((b.lastMsgTime || 0) - (a.lastMsgTime || 0))
+  )
 }
 
 function onWsRead(data) {
@@ -1362,6 +2130,7 @@ function refreshConvPreview(cid) {
   const lastMsg = [...contact.messages].reverse().find((m) => m.isPending !== true)
   if (!lastMsg) return
   contact.lastMessage = convLastPreview(lastMsg)
+  setConvLastSender(contact, lastMsg.status === 1 ? 0 : (lastMsg.type === 'out' ? meUid() : lastMsg.senderUid), lastMsg.senderName)
   contact.time = formatConvTime(lastMsg.createdAt)
   contact.lastMsgTime = lastMsg.createdAt || Math.floor(Date.now() / 1000)
   reorderConversations()
@@ -1454,6 +2223,9 @@ async function insertConvFromEvent(data) {
     online: false,
     type: isGroupConv ? 'group' : info.type || null,
     lastMessage: '',
+    lastSenderUid: 0,
+    lastSenderName: '',
+    lastMentionMe: false,
     time: '',
     lastMsgTime: 0,
     unread: 0,
@@ -1488,6 +2260,7 @@ function onWsSocial(body) {
   }
   if (body.event === 'group.updated') {
     // 群名/公告被管理员修改：刷新群会话展示名；失效资料缓存使下次打开拉最新
+    // G7/G8：设置开关变化（入群确认/全员禁言）也随本事件同步，禁言态即时生效（按钮置灰）
     const d = body.data || {}
     if (d.g_uid == null) return
     conversations.value.forEach((c) => {
@@ -1497,12 +2270,25 @@ function onWsSocial(body) {
     gp.groupMembersCache.delete(Number(d.g_uid))
     const cur = currentContact.value
     if (cur && cur.type === 'group' && String(cur.targetId) === String(d.g_uid)) {
-      gp.groupInfo = {
+      const info = {
         ...gp.groupInfo,
         name: d.name || gp.groupInfo.name,
         announcement: d.announcement != null ? d.announcement : gp.groupInfo.announcement,
+        muteAll: d.mute_all != null ? Number(d.mute_all) : gp.groupInfo.muteAll,
+        inviteConfirm: d.invite_confirm != null ? Number(d.invite_confirm) : gp.groupInfo.inviteConfirm,
       }
+      gp.groupInfo = info
+      const cached = gp.groupMembersCache.get(d.g_uid)
+      if (cached) cached.info = info
     }
+    return
+  }
+  if (body.event === 'group.announcement') {
+    // 公告强提醒（G11）：记录待展示公告，打开该群会话时顶部横幅展示；关闭后新公告再次触发
+    const d = body.data || {}
+    if (d.g_uid == null) return
+    pendingAnnounceMap.value[String(d.g_uid)] = String(d.announcement || '')
+    dismissedAnnounceSet.delete(String(d.g_uid))
     return
   }
   if (body.event === 'group.left') {
@@ -1518,6 +2304,77 @@ function onWsSocial(body) {
     }
     if (d.g_uid != null) gp.groupMembersCache.delete(Number(d.g_uid))
     if (cid && activeId.value === cid) activeId.value = ''
+    return
+  }
+  if (body.event === 'group.kicked') {
+    // 被移出群聊：与退群同样的本地清理（会话/消息删除），并提示被踢；
+    // 服务端已删会话视图，发送守卫会拦截非成员发消息，双保险
+    const d = body.data || {}
+    const convIdStr = d.conv_id ? String(d.conv_id) : ''
+    const cid = convIdStr ? `conv-${convIdStr}` : ''
+    conversations.value = conversations.value.filter((x) => x.id !== cid)
+    if (convIdStr) {
+      localdb.messages.removeByConv(convIdStr)
+      localdb.conversations.remove(convIdStr)
+      noPersistSet.value.delete(convIdStr)
+    }
+    if (d.g_uid != null) gp.groupMembersCache.delete(Number(d.g_uid))
+    if (cid && activeId.value === cid) {
+      activeId.value = ''
+      showProfile.value = false
+    }
+    showToast(`你已被 ${d.operator_name || '群管理员'} 移出群聊`, 'info')
+    return
+  }
+  if (body.event === 'group.role_changed') {
+    // 成员角色变更（设/撤管理员）：失效该群资料缓存；当前群则重载使角色标签即时生效
+    const d = body.data || {}
+    if (d.g_uid == null) return
+    gp.groupMembersCache.delete(Number(d.g_uid))
+    gp.groupMembersCache.delete(d.g_uid)
+    const cur = currentContact.value
+    if (cur && cur.type === 'group' && String(cur.targetId) === String(d.g_uid)) {
+      gp.loadLiveGroupMembers()
+    }
+    return
+  }
+  if (body.event === 'group.owner_changed') {
+    // 群主转让：与角色变更同样处理（myRole/ownerUid 变化决定管理入口与群设置权限）
+    const d = body.data || {}
+    if (d.g_uid == null) return
+    gp.groupMembersCache.delete(Number(d.g_uid))
+    gp.groupMembersCache.delete(d.g_uid)
+    const cur = currentContact.value
+    if (cur && cur.type === 'group' && String(cur.targetId) === String(d.g_uid)) {
+      gp.loadLiveGroupMembers()
+    }
+    return
+  }
+  if (body.event === 'group.nickname_changed') {
+    // 成员群昵称变更：就地更新已加载的成员昵称（发送者展示名即时生效），避免整群重载
+    const d = body.data || {}
+    if (d.g_uid == null || d.uid == null) return
+    const m = (gp.liveGroupMembers || []).find((x) => String(x.uid) === String(d.uid))
+    if (m) m.nickname = String(d.nickname || '')
+    return
+  }
+  if (body.event === 'group.invite_pending') {
+    // 入群确认（G7）：有成员邀请待处理，通知中心页面刷新（KeepAlive 缓存页，走 window 事件驱动）
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('notification:refresh'))
+    }
+    return
+  }
+  if (body.event === 'group.muted') {
+    // 成员禁言变更（G8）：失效该群资料缓存使成员标签/禁言状态刷新；自己侧输入框禁用态由 groupInfo 驱动
+    const d = body.data || {}
+    if (d.g_uid == null) return
+    gp.groupMembersCache.delete(Number(d.g_uid))
+    gp.groupMembersCache.delete(d.g_uid)
+    const cur = currentContact.value
+    if (cur && cur.type === 'group' && String(cur.targetId) === String(d.g_uid)) {
+      gp.loadLiveGroupMembers()
+    }
     return
   }
   // group.invite 等：会话项由 conversation.created 事件插入，无需全量重载
@@ -1637,6 +2494,12 @@ async function loadRealData() {
       unread: Number(c.unread) || 0,
       peer_read_seq: Number(c.peer_read_seq) || 0,
       last_synced_seq: Number(c.last_synced_seq) || 0,
+      // 最后消息发送者（群聊列表名称前缀用）；旧服务端无此字段时传 NULL 保留本地值
+      last_sender_uid: c.last_sender_uid != null ? String(c.last_sender_uid) : null,
+      last_sender_name: c.last_sender_name != null ? String(c.last_sender_name) : null,
+      // 置顶/免打扰：服务端为权威（多端同步），本地切换后下次拉取自动对齐
+      muted: c.muted ? 1 : 0,
+      pinned: c.pinned ? 1 : 0,
     }))
   )
   let list = incoming
@@ -1677,6 +2540,9 @@ function applyConvList(list) {
       if (ph && ph.messages && ph.messages.length) {
         real.messages = ph.messages
         real.lastMessage = ph.lastMessage
+        real.lastSenderUid = ph.lastSenderUid || 0
+        real.lastSenderName = ph.lastSenderName || ''
+        real.lastMentionMe = !!ph.lastMentionMe
         real.time = ph.time
         real.lastMsgTime = ph.lastMsgTime
       }
@@ -1696,8 +2562,12 @@ function applyConvList(list) {
       c._hasMore = prev._hasMore
     }
   })
-  // 会话列表按最后一条消息时间倒序排列（最新在最上，类似微信）
-  list.sort((a, b) => (b.lastMsgTime || 0) - (a.lastMsgTime || 0))
+  // 会话列表排序：置顶区优先，同区内按最后消息时间倒序（类似微信）
+  list.sort(
+    (a, b) =>
+      ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) ||
+      ((b.lastMsgTime || 0) - (a.lastMsgTime || 0))
+  )
   conversations.value = list
   list.forEach((c) => {
     realConvMap.value[c.id] = c.convId
@@ -1710,6 +2580,8 @@ function applyConvList(list) {
     const op = staged.uploadingPreviewMap[String(c.convId)] || staged.uploadingPreviewMap[String(c.id)]
     if (op && Number(op.time) >= (Number(c.lastMsgTime) || 0)) {
       c.lastMessage = op.preview
+      // 乐观预览来自自己的上传：发送者记自己（群聊不加名称前缀）
+      setConvLastSender(c, meUid(), '')
     }
   })
   healMediaPreviews(list)
@@ -1749,7 +2621,9 @@ function healOneConvPreview(c, attempt) {
     else if (isVideoMsg(pseudo)) fixed = '[视频]'
     if (fixed) {
       c.lastMessage = fixed
-      localdb.conversations.upsert([{ id: convIdStr, last_msg: fixed }])
+      // 同步纠正发送者（取本地行的 sender，保证名称前缀与摘要同源）
+      setConvLastSender(c, last.sender_uid, last.sender_name)
+      localdb.conversations.upsert([{ id: convIdStr, last_msg: fixed, last_sender_uid: String(last.sender_uid || 0), last_sender_name: last.sender_name || '' }])
       return
     }
     // 本地最新行与列表时间对不上：本地数据尚未追平，稍后重试
@@ -1776,6 +2650,8 @@ onMounted(() => {
     wsClient.on('read', onWsRead)
     wsClient.on('social', onWsSocial)
     wsClient.on('status', onWsStatus)
+    wsClient.on('reaction', onWsReaction) // S6 表情回应
+    wsClient.on('typing', onWsTyping) // S7 对方正在输入
     wsStatus.value = wsClient.getStatus()
     wsClient.connect()
     window.addEventListener('wc:friend-added', onCustomFriendAdded)
@@ -1916,12 +2792,13 @@ onBeforeUnmount(() => {
             :key="c.id"
             :data-id="c.id"
             class="conv-item"
-            :class="{ active: c.id === activeId }"
+            :class="{ active: c.id === activeId, pinned: c.pinned }"
             role="option"
             :aria-selected="c.id === activeId"
-            :aria-label="`${c.name}，${c.unread > 0 ? c.unread + '条未读' : ''}，最近消息：${c.lastMessage}`"
+            :aria-label="`${c.name}，${c.unread > 0 ? c.unread + '条未读' : ''}，最近消息：${convListPreview(c)}`"
             :tabindex="c.id === activeId ? 0 : -1"
             @click="selectConversation(c.id)"
+            @contextmenu.prevent="convMenuApi.openConvMenu($event, c)"
             @keydown.enter.prevent="selectConversation(c.id)"
             @keydown.space.prevent="selectConversation(c.id)"
           >
@@ -1930,11 +2807,28 @@ onBeforeUnmount(() => {
             </div>
             <div class="conv-text">
               <div class="conv-name">{{ c.name }}</div>
-              <div class="conv-last">{{ c.lastMessage }}</div>
+              <div class="conv-last">
+                <!-- 草稿优先展示（微信行为：红色 [草稿] 前缀替代最后消息） -->
+                <template v-if="c.draft"><span class="draft-tag">[草稿]</span>{{ c.draft }}</template>
+                <!-- 群聊非自己的消息拼 "发送者: 内容" 前缀（名称动态解析：备注 > 群昵称 > 真实昵称） -->
+                <template v-else>{{ convListPreview(c) }}</template>
+              </div>
             </div>
             <div class="conv-meta">
               <span class="conv-time">{{ c.time }}</span>
-              <span v-if="c.unread > 0" class="unread-badge" :aria-label="`未读消息 ${c.unread} 条`">{{ formatUnread(c.unread) }}</span>
+              <!-- 免打扰指示图标：开启/关闭免打扰时列表即时可见的反馈（微信风格灰色铃铛划线） -->
+              <svg v-if="c.muted" class="muted-ico" viewBox="0 0 16 16" width="12" height="12" aria-label="已开启消息免打扰">
+                <path d="M8 2a4 4 0 0 1 4 4v3l1.5 2H2.5L4 9V6a4 4 0 0 1 4-4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+                <path d="M6.5 13a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                <path d="M2.5 2.5l11 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+              </svg>
+              <!-- 未读角标：免打扰灰点；标记未读且无真实未读时也显示灰点（微信行为） -->
+              <span
+                v-if="c.unread > 0 || c.markedUnread"
+                class="unread-badge"
+                :class="{ 'badge-dot': c.muted || c.unread === 0 }"
+                :aria-label="c.unread > 0 ? `未读消息 ${c.unread} 条` : '已标记未读'"
+              >{{ !c.muted && c.unread > 0 ? formatUnread(c.unread) : '' }}</span>
             </div>
           </div>
           <!-- 搜索无结果占位 -->
@@ -1943,22 +2837,61 @@ onBeforeUnmount(() => {
             <p class="conv-empty-sub">试试搜索"林"、"群"或"设计"</p>
           </div>
         </div>
+
+        <!-- 会话右键操作菜单（置顶 / 免打扰） -->
+        <div
+          v-if="convMenuApi.convMenu"
+          class="conv-menu"
+          :style="{ left: convMenuApi.convMenu.x + 'px', top: convMenuApi.convMenu.y + 'px' }"
+          @click.stop
+        >
+          <button class="conv-menu-item" @click="convMenuApi.togglePin()">
+            <svg viewBox="0 0 16 16" width="14" height="14">
+              <path d="M9.5 2l4.5 4.5-2 .5-2 2-.5 3-2-2-3.5 3.5L3.5 13 7 9.5l-2-2 3-.5 2-2 .5-3z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+            </svg>
+            <span>{{ convMenuApi.menuConv && convMenuApi.menuConv.pinned ? '取消置顶' : '置顶聊天' }}</span>
+          </button>
+          <button class="conv-menu-item" @click="convMenuApi.toggleMute()">
+            <svg viewBox="0 0 16 16" width="14" height="14">
+              <path d="M8 2a4 4 0 0 1 4 4v3l1.5 2H2.5L4 9V6a4 4 0 0 1 4-4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <path d="M6.5 13a1.5 1.5 0 0 0 3 0" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+              <path d="M2.5 2.5l11 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+            </svg>
+            <span>{{ convMenuApi.menuConv && convMenuApi.menuConv.muted ? '取消免打扰' : '消息免打扰' }}</span>
+          </button>
+          <button class="conv-menu-item" @click="convMenuApi.toggleMarkUnread()">
+            <svg viewBox="0 0 16 16" width="14" height="14">
+              <circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.2" />
+              <circle cx="8" cy="8" r="1.8" fill="currentColor" />
+            </svg>
+            <span>{{ convMenuApi.menuConv && (convMenuApi.menuConv.markedUnread || convMenuApi.menuConv.unread > 0) ? '取消标记' : '标记未读' }}</span>
+          </button>
+          <button class="conv-menu-item danger" @click="convMenuApi.removeConversation()">
+            <svg viewBox="0 0 16 16" width="14" height="14">
+              <path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.6 9h5.8l.6-9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>删除会话</span>
+          </button>
+        </div>
       </aside>
 
       <div class="divider-col"></div>
 
-      <!-- 聊天区：支持拖拽图片/文件到此处释放上传 -->
+      <!-- 聊天区：支持拖拽图片/文件到此处释放上传；面板打开时点击聊天区自动关闭面板 -->
       <section
         class="chat"
+        @click="onChatAreaClick"
         @dragenter="staged.onChatDragEnter"
         @dragover="staged.onChatDragOver"
         @dragleave="staged.onChatDragLeave"
         @drop="staged.onChatDrop"
       >
-        <!-- 聊天头部 -->
+        <!-- 聊天头部：群聊显示 "群名 (人数)"；单聊显示对方展示名（备注优先，无备注才昵称） -->
         <header class="chat-header">
           <div class="chat-header-left">
-            <span class="contact-name">{{ hasActiveContact ? contactMeta.name : 'WorkChat' }}</span>
+            <span class="contact-name">{{ chatTitle }}</span>
+            <!-- S7 对方正在输入：单聊且 3s 内有 typing 帧时替换/追加提示 -->
+            <span v-if="typingVisible" class="typing-hint">对方正在输入…</span>
           </div>
           <div class="chat-header-right">
             <!-- 顶部"查找聊天记录"按钮：方便用户不打开资料面板也能直接搜 -->
@@ -1980,7 +2913,7 @@ onBeforeUnmount(() => {
                 <path d="M14.67 9.5l4.58-2.08v7.16L14.67 12.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
               </svg>
             </button>
-            <button class="circle-btn" :class="{ active: showProfile }" aria-label="更多" @click="toggleProfile">
+            <button class="circle-btn" :class="{ active: showProfile }" aria-label="更多" @click.stop="toggleProfile">
               <svg viewBox="0 0 22 22" width="22" height="22">
                 <circle cx="6" cy="11" r="1.5" fill="currentColor" />
                 <circle cx="11" cy="11" r="1.5" fill="currentColor" />
@@ -1990,6 +2923,17 @@ onBeforeUnmount(() => {
           </div>
         </header>
         <div class="chat-divider"></div>
+
+        <!-- 群公告强提醒横幅（G11）：公告更新后打开该群会话时展示，可关闭 -->
+        <div v-if="announceBanner" class="announce-banner" role="alert">
+          <svg viewBox="0 0 16 16" width="14" height="14" class="announce-ico" aria-hidden="true">
+            <path d="M2.5 6.5v3l2 .5 4 2.5v-9l-4 2.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+            <path d="M10.5 5.5c1 .8 1 4.2 0 5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+          <span class="announce-label">群公告</span>
+          <span class="announce-text" :title="announceBanner">{{ announceBanner }}</span>
+          <button class="announce-close" aria-label="关闭公告横幅" @click="dismissAnnounceBanner()">×</button>
+        </div>
 
         <!-- 消息区容器：胶囊的定位基准，仅覆盖消息滚动区（不含头部/输入栏） -->
         <div class="messages-area">
@@ -2040,8 +2984,20 @@ onBeforeUnmount(() => {
                   class="message-row"
                   :class="[meta.msg.type, { highlighted: highlightMessageId === meta.msg.id }]"
                   :data-msg-id="meta.msg.id"
-                  @contextmenu.prevent="msgMenuApi.openMsgMenu($event, meta.msg)"
+                  @click="multiSel.on && toggleMultiMsg(meta.msg)"
+                  @contextmenu.prevent="multiSel.on ? toggleMultiMsg(meta.msg) : msgMenuApi.openMsgMenu($event, meta.msg)"
                 >
+                  <!-- 多选勾选框：多选模式下每行左侧展示（系统/撤回消息不可勾选） -->
+                  <span
+                    v-if="multiSel.on"
+                    class="multi-check"
+                    :class="{ checked: isMultiSelected(meta.msg), disabled: !canMultiSelect(meta.msg) }"
+                    @click.stop="toggleMultiMsg(meta.msg)"
+                  >
+                    <svg v-if="isMultiSelected(meta.msg)" viewBox="0 0 16 16" width="12" height="12">
+                      <path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </span>
                   <!-- 系统消息：居中灰色胶囊，无头像/气泡 -->
                   <div v-if="meta.msg.isSystem" class="system-msg">
                     <span class="system-msg-inner">{{ meta.msg.text }}</span>
@@ -2064,12 +3020,20 @@ onBeforeUnmount(() => {
                         :msg="meta.msg"
                         side="in"
                         :voice="voicePlayer"
-                        @menu="msgMenuApi.openMsgMenu"
+                        :resolve-name="quoteDisplayName"
+                        :reactions="aggregateReactions(meta.msg)"
+                        :can-react="!meta.msg.isPending"
+                        :show-read-count="isGroupAdminNow"
+                        :read-count="meta.msg.readCount || 0"
+                        @menu="onBubbleMenu"
                         @image-loaded="media.onImageLoaded"
                         @open-image="media.openImage"
                         @open-video="media.openVideo"
                         @open-file="media.openFile"
                         @video-error="media.onBubbleVideoError"
+                        @quote-jump="onQuoteJump"
+                        @open-merge="onOpenMerge"
+                        @react="onReact(meta.msg, $event)"
                       />
                     </div>
                   </template>
@@ -2079,12 +3043,20 @@ onBeforeUnmount(() => {
                         :msg="meta.msg"
                         side="out"
                         :voice="voicePlayer"
-                        @menu="msgMenuApi.openMsgMenu"
+                        :resolve-name="quoteDisplayName"
+                        :reactions="aggregateReactions(meta.msg)"
+                        :can-react="!meta.msg.isPending"
+                        :show-read-count="isGroupAdminNow"
+                        :read-count="meta.msg.readCount || 0"
+                        @menu="onBubbleMenu"
                         @image-loaded="media.onImageLoaded"
                         @open-image="media.openImage"
                         @open-video="media.openVideo"
                         @open-file="media.openFile"
                         @video-error="media.onBubbleVideoError"
+                        @quote-jump="onQuoteJump"
+                        @open-merge="onOpenMerge"
+                        @react="onReact(meta.msg, $event)"
                       />
                       <div class="send-status">
                         <svg viewBox="0 0 14 14" width="14" height="14">
@@ -2116,6 +3088,20 @@ onBeforeUnmount(() => {
                 </svg>
                 <span>复制</span>
               </button>
+              <button v-if="msgMenuApi.canQuote(msgMenuApi.menuMsg)" class="msg-menu-item" @click="msgMenuApi.quoteMsg()">
+                <svg viewBox="0 0 16 16" width="14" height="14">
+                  <path d="M3 4.5h10M3 8h10M3 11.5h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                  <path d="M10.5 9.5l2.5 2.5-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span>引用</span>
+              </button>
+              <button class="msg-menu-item" @click="enterMultiSelect()">
+                <svg viewBox="0 0 16 16" width="14" height="14">
+                  <rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.3" />
+                  <path d="M5 8.2l2 2 4-4.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span>多选</span>
+              </button>
               <button
                 v-if="msgMenuApi.canRecall(msgMenuApi.menuMsg)"
                 class="msg-menu-item danger"
@@ -2144,6 +3130,56 @@ onBeforeUnmount(() => {
             </svg>
           </button>
         </transition>
+
+        <!-- 多选操作条：底部悬浮（逐条转发 / 合并转发 / 删除 / 取消） -->
+        <div v-if="multiSel.on" class="multi-bar">
+          <span class="multi-bar-count">已选 {{ multiSel.ids.length }} 条</span>
+          <button class="multi-bar-btn" :disabled="!multiSel.ids.length" @click="openForwardPicker()">
+            <svg viewBox="0 0 16 16" width="14" height="14">
+              <path d="M5.5 3.5L2 7l3.5 3.5M2 7h8a4 4 0 0 1 4 4v1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>逐条转发</span>
+          </button>
+          <button class="multi-bar-btn" :disabled="!multiSel.ids.length" @click="openMergeForwardPicker()">
+            <svg viewBox="0 0 16 16" width="14" height="14">
+              <rect x="2" y="2.5" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3" />
+              <path d="M4.5 6h7M4.5 8.5h7M4.5 11h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+            </svg>
+            <span>合并转发</span>
+          </button>
+          <button class="multi-bar-btn danger" :disabled="!multiSel.ids.length" @click="deleteMultiSel()">
+            <svg viewBox="0 0 16 16" width="14" height="14">
+              <path d="M6.5 3l.5-.5h2l.5.5H12v1.5H4V3h2.5zM5 5.5h6l-.6 8a1 1 0 01-1 .9H6.6a1 1 0 01-1-.9l-.6-8z" fill="currentColor" />
+            </svg>
+            <span>删除</span>
+          </button>
+          <button class="multi-bar-btn" @click="exitMultiSelect()">取消</button>
+        </div>
+
+        <!-- 转发目标会话选择弹窗（多选；逐条/合并两种模式共用） -->
+        <ForwardPickerModal
+          v-if="showForwardPicker"
+          :conversations="forwardTargets"
+          :loading="forwardBusy"
+          @close="showForwardPicker = false"
+          @confirm="onForwardConfirm"
+        />
+
+        <!-- 合并转发详情弹层（S2）：点击合并卡片查看完整消息列表 -->
+        <div v-if="mergeDetail" class="merge-modal-mask" @click.self="mergeDetail = null">
+          <div class="merge-modal">
+            <header class="merge-modal-head">
+              <span>合并转发的消息（{{ mergeDetail.count }} 条）</span>
+              <button class="merge-modal-close" aria-label="关闭" @click="mergeDetail = null">×</button>
+            </header>
+            <div class="merge-modal-body">
+              <div v-for="(it, ii) in mergeDetail.items" :key="ii" class="merge-detail-row">
+                <span class="merge-detail-name">{{ it.sender_name }}</span>
+                <span class="merge-detail-content">{{ it.content || '（无内容）' }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
         </div>
 
         <!-- 图片预览遮罩 -->
@@ -2175,7 +3211,13 @@ onBeforeUnmount(() => {
         <!-- 输入栏（未选中会话时不显示） -->
         <footer v-if="hasActiveContact" class="input-bar">
           <div class="tools-row">
-            <button class="tool-btn" :class="{ active: showEmojiPanel }" aria-label="表情" @click="toggleEmojiPanel">
+            <button
+              class="tool-btn"
+              :class="{ active: showEmojiPanel }"
+              :disabled="chatInputDisabled"
+              aria-label="表情"
+              @click="toggleEmojiPanel"
+            >
               <svg viewBox="0 0 20 20" width="20" height="20">
                 <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" stroke-width="1.5" />
                 <path d="M6.5 12c.8 1.2 2 2 3.5 2s2.7-.8 3.5-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
@@ -2183,7 +3225,7 @@ onBeforeUnmount(() => {
                 <circle cx="12.5" cy="8.5" r="1" fill="currentColor" />
               </svg>
             </button>
-            <button class="tool-btn" aria-label="图片" @click="staged.sendImage()">
+            <button class="tool-btn" :disabled="chatInputDisabled" aria-label="图片" @click="staged.sendImage()">
               <svg viewBox="0 0 20 20" width="20" height="20">
                 <rect x="2.5" y="3.33" width="15" height="13.33" rx="2" fill="none" stroke="currentColor" stroke-width="1.5" />
                 <circle cx="7.5" cy="8.33" r="1.5" fill="none" stroke="currentColor" stroke-width="1.5" />
@@ -2191,7 +3233,7 @@ onBeforeUnmount(() => {
               </svg>
             </button>
             <!-- 文件按钮：回形针（附件）图标，大小/线宽/hover 效果与工具栏其他按钮完全一致 -->
-            <button class="tool-btn" aria-label="发送文件" title="发送文件" @click="staged.sendFile()">
+            <button class="tool-btn" :disabled="chatInputDisabled" aria-label="发送文件" title="发送文件" @click="staged.sendFile()">
               <svg viewBox="0 0 20 20" width="20" height="20">
                 <path
                   d="M17.87 9.21l-7.66 7.66a5 5 0 0 1-7.07-7.07l7.66-7.66a3.33 3.33 0 0 1 4.72 4.72l-7.67 7.66a1.67 1.67 0 0 1-2.36-2.36l7.07-7.07"
@@ -2199,10 +3241,12 @@ onBeforeUnmount(() => {
                 />
               </svg>
             </button>
-            <!-- 语音按钮：点击开始录音、再点结束并进附件暂存区；无麦克风时 toast 提示 -->
+            <!-- 语音按钮：点击开始录音、再点结束并进附件暂存区；无麦克风时 toast 提示。
+                 禁言时置灰（录音进行中允许结束，不硬切） -->
             <button
               class="tool-btn"
               :class="{ recording: staged.recording }"
+              :disabled="chatInputDisabled && !staged.recording"
               :aria-label="staged.recording ? '结束录音' : '开始录音'"
               :title="staged.recording ? '再点击一次结束录音' : '点击开始录音'"
               @click="staged.toggleRecordVoice()"
@@ -2246,15 +3290,45 @@ onBeforeUnmount(() => {
             <span class="handle-bar"></span>
           </div>
 
+          <!-- 引用回复条：展示被引消息摘要，× 取消引用；发送后自动清除 -->
+          <div v-if="quoteDraft" class="quote-bar">
+            <span class="quote-bar-text" :title="quoteBarText">{{ quoteBarText }}</span>
+            <button class="quote-bar-close" aria-label="取消引用" @click="clearQuote">
+              <svg viewBox="0 0 12 12" width="10" height="10">
+                <path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          <!-- @提及候选弹层（仅群聊）：输入 @ 触发，点击/回车选中插入 @名字 -->
+          <div v-if="mentionPopup.show && mentionCandidates.length" class="mention-popup" role="listbox">
+            <div
+              v-for="(m, mi) in mentionCandidates"
+              :key="m.uid"
+              class="mention-item"
+              :class="{ active: mi === mentionPopup.active }"
+              role="option"
+              :aria-selected="mi === mentionPopup.active"
+              @mousedown.prevent="insertMention(m)"
+            >
+              <div class="avatar tiny" :style="{ background: m.color }"><span>{{ m.avatar }}</span></div>
+              <span class="mention-name">{{ m.name }}</span>
+            </div>
+          </div>
+
           <div ref="inputBoxEl" class="input-box" :style="inputBoxHeight ? { height: inputBoxHeight + 'px' } : null">
             <textarea
               ref="inputFieldEl"
               v-model="message"
               class="input-field"
-              placeholder="输入消息…"
+              :placeholder="chatInputPlaceholder"
+              :disabled="chatInputDisabled"
               rows="2"
-              @input="autoResizeInput"
-              @keydown.enter.exact.prevent="send"
+              @input="onInputTyping"
+              @paste="onInputPaste"
+              @keydown="onInputKeydown"
+              @keydown.enter.exact="onInputEnterKey"
+              @keydown.enter.ctrl="onCtrlEnterSend"
             ></textarea>
           </div>
 
@@ -2266,8 +3340,8 @@ onBeforeUnmount(() => {
               </svg>
               <span>消息已端到端加密，并保存在本地</span>
             </div>
-            <span class="shortcut">Enter 发送 · Shift+Enter 换行</span>
-            <button class="send-btn" :disabled="!message.trim() && !staged.stagedFiles.length" @click="send">
+            <span class="shortcut">{{ sendWithEnterEnabled() ? 'Enter 发送 · Shift+Enter 换行' : 'Enter 换行 · Ctrl+Enter 发送' }}</span>
+            <button class="send-btn" :disabled="chatInputDisabled || (!message.trim() && !staged.stagedFiles.length)" @click="send">
               <svg viewBox="0 0 16 16" width="16" height="16">
                 <path d="M2 8l12-6-4 14-3-6-5-2z" fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" />
               </svg>
@@ -2307,6 +3381,7 @@ onBeforeUnmount(() => {
             @open-search="openSearchHistory"
             @toggle-no-persist="toggleNoPersist"
             @save-remark="saveRemark"
+            @start-voice-call="call.startVoiceCall()"
           />
           <GroupProfilePanel
             v-else
@@ -2346,6 +3421,9 @@ onBeforeUnmount(() => {
       :initial-name="currentContact.name"
       :initial-announcement="gp.groupInfo.announcement || ''"
       :is-admin="gp.isGroupAdmin"
+      :initial-invite-confirm="gp.groupInfo.inviteConfirm"
+      :initial-mute-all="gp.groupInfo.muteAll"
+      :initial-saved="gp.groupInfo.saved"
       @close="gp.showGroupSettings = false"
       @saved="gp.onGroupSettingsSaved"
       @failed="gp.onGroupSettingsFailed"
@@ -2624,6 +3702,21 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 2px var(--im-primary) inset;
 }
 
+/* 置顶会话：背景比普通区略深一档（微信风格）；选中态样式在下方覆盖 */
+.conv-item.pinned {
+  background: var(--im-pinned);
+}
+
+.conv-item.pinned:hover {
+  background: var(--im-pinned-hover);
+}
+
+/* 免打扰指示图标：灰色小铃铛（与灰点角标同色，置于时间右侧） */
+.muted-ico {
+  color: #b0b6bf;
+  flex-shrink: 0;
+}
+
 /* 选中态：淡品牌蓝背景，比浅灰深但不过于浓烈 */
 .conv-item.active {
   background: var(--im-selected);
@@ -2752,6 +3845,23 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 1.5px var(--im-primary), 0 2px 4px rgba(37, 99, 235, 0.25);
 }
 
+/* 免打扰会话未读角标：灰色小圆点，不显示数字（微信行为） */
+.unread-badge.badge-dot,
+.conv-item.active .unread-badge.badge-dot {
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  background: #b0b6bf;
+  box-shadow: none;
+}
+
+/* 草稿前缀：红色 [草稿] 标记（微信风格） */
+.draft-tag {
+  color: var(--im-danger);
+  margin-right: 2px;
+}
+
 /* 列分隔线 */
 .divider-col {
   width: 1px;
@@ -2789,6 +3899,19 @@ onBeforeUnmount(() => {
   font-size: 1.071rem;
   font-weight: 700;
   color: var(--im-text-title);
+}
+
+/* S7 对方正在输入：会话名旁灰色小字 */
+.typing-hint {
+  font-size: 0.857rem;
+  font-weight: 400;
+  color: var(--im-text-muted);
+  animation: typingBlink 1.2s ease-in-out infinite;
+}
+
+@keyframes typingBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
 
 /* WS 连接状态：绝对定位在"会话"标题行水平居中 */
@@ -2885,6 +4008,56 @@ onBeforeUnmount(() => {
   height: 1px;
   background: var(--im-border);
   flex-shrink: 0;
+}
+
+/* 群公告强提醒横幅（G11）：聊天头部下方通栏，可关闭 */
+.announce-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--im-surface-2);
+  border-bottom: 1px solid var(--im-border);
+  flex-shrink: 0;
+}
+
+.announce-ico {
+  flex-shrink: 0;
+  color: var(--im-primary);
+}
+
+.announce-label {
+  flex-shrink: 0;
+  font-size: 0.857rem;
+  font-weight: 600;
+  color: var(--im-primary);
+}
+
+.announce-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.857rem;
+  color: var(--im-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.announce-close {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--im-text-muted);
+  cursor: pointer;
+}
+
+.announce-close:hover {
+  background: var(--im-hover-gray);
 }
 
 /* 消息区 */
@@ -3167,6 +4340,202 @@ onBeforeUnmount(() => {
   color: var(--im-danger, #ef4444);
 }
 
+/* ===== 微信风格：会话列表右键操作菜单（复用消息菜单视觉） ===== */
+.conv-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 130px;
+  background: var(--im-surface);
+  border: 1px solid var(--im-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  animation: msgMenuIn 0.12s ease;
+}
+
+.conv-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  color: var(--im-text-title);
+  font-size: 0.929rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* 危险操作（删除会话）：红色文字 */
+.conv-menu-item.danger {
+  color: var(--im-danger, #ef4444);
+}
+
+/* 合并转发详情弹层（S2） */
+.merge-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.merge-modal {
+  width: 420px;
+  max-width: calc(100vw - 48px);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--im-surface);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.merge-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--im-border);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--im-text-title);
+}
+
+.merge-modal-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--im-text-muted);
+  cursor: pointer;
+}
+
+.merge-modal-close:hover {
+  background: var(--im-hover-gray);
+}
+
+.merge-modal-body {
+  overflow-y: auto;
+  padding: 8px 16px 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.merge-detail-row {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--im-border);
+  font-size: 0.929rem;
+}
+
+.merge-detail-row:last-child {
+  border-bottom: none;
+}
+
+.merge-detail-name {
+  flex-shrink: 0;
+  max-width: 96px;
+  color: var(--im-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.merge-detail-content {
+  min-width: 0;
+  color: var(--im-text-title);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.conv-menu-item:hover {
+  background: var(--im-surface-2);
+}
+
+/* ===== 多选模式：勾选框 + 底部操作条 ===== */
+.multi-check {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-top: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--im-border);
+  background: var(--im-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  cursor: pointer;
+}
+
+.multi-check.checked {
+  background: var(--im-primary);
+  border-color: var(--im-primary);
+}
+
+.multi-check.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.multi-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 1050;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--im-surface);
+  border: 1px solid var(--im-border);
+  border-radius: 999px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+}
+
+.multi-bar-count {
+  font-size: 0.857rem;
+  color: var(--im-text-secondary);
+  margin-right: 4px;
+}
+
+.multi-bar-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--im-surface-2);
+  color: var(--im-text-title);
+  font-size: 0.929rem;
+  cursor: pointer;
+}
+
+.multi-bar-btn:hover:not(:disabled) {
+  background: var(--im-hover-gray);
+}
+
+.multi-bar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.multi-bar-btn.danger {
+  color: var(--im-danger, #ef4444);
+}
+
 /* 撤回消息提示行：整行撑满并左右居中，灰色文字 + 可选蓝色"重新编辑"链接 */
 .recall-msg {
   width: 100%;
@@ -3296,6 +4665,18 @@ onBeforeUnmount(() => {
   background: var(--im-surface-2);
 }
 
+/* G8 禁言置灰：表情/图片/文件/语音按钮不可用 */
+.tool-btn:disabled {
+  color: var(--im-text-muted);
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+.tool-btn:disabled:hover {
+  background: transparent;
+}
+
 /* 语音录音中：图标变红提示正在录制 */
 .tool-btn.recording {
   color: var(--im-danger, #ef4444);
@@ -3339,6 +4720,91 @@ onBeforeUnmount(() => {
 
 .input-resize-handle:hover .handle-bar {
   background: var(--im-border);
+}
+
+/* ===== 引用回复条：输入框上方灰色小卡（摘要 + × 取消） ===== */
+.quote-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--im-surface-2);
+  border: 1px solid var(--im-border);
+}
+
+.quote-bar-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.857rem;
+  color: var(--im-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quote-bar-close {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--im-text-muted);
+  cursor: pointer;
+}
+
+.quote-bar-close:hover {
+  background: var(--im-hover-gray);
+  color: var(--im-text-title);
+}
+
+/* ===== @提及候选弹层：浮在输入栏上方（input-bar 已 position:relative） ===== */
+.mention-popup {
+  position: absolute;
+  left: 12px;
+  bottom: 100%;
+  margin-bottom: 6px;
+  z-index: 900;
+  min-width: 200px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--im-surface);
+  border: 1px solid var(--im-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.mention-item.active,
+.mention-item:hover {
+  background: var(--im-surface-2);
+}
+
+.mention-name {
+  font-size: 0.929rem;
+  color: var(--im-text-title);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar.tiny {
+  width: 22px;
+  height: 22px;
+  font-size: 0.72rem;
 }
 
 .input-box {

@@ -3,7 +3,7 @@ import { ref, computed, onActivated } from 'vue'
 import { friendApi, groupApi } from '../api/social'
 
 // 创建群聊入口已移至会话列表搜索框旁“+”菜单（MainWindow），本组件不再持有弹窗
-const emit = defineEmits(['send-message'])
+const emit = defineEmits(['send-message', 'start-voice-call'])
 
 // 当前选中的通讯录项 id：默认详情面板展示第一个好友
 const selectedDetailId = ref('')
@@ -47,6 +47,7 @@ async function loadRealData() {
         color: colors[(i + 3) % colors.length],
         count: g.member_count || 0,
         gUid: g.g_uid,
+        saved: g.saved !== 0, // G10 保存到通讯录：关闭后不在群列表展示
       }))
     }
   } catch {
@@ -100,8 +101,10 @@ const filteredFriends = computed(() => {
 })
 const filteredGroups = computed(() => {
   const kw = searchKw.value.trim().toLowerCase()
-  if (!kw) return groups.value
-  return groups.value.filter((g) => (g.name || '').toLowerCase().includes(kw))
+  // G10 保存到通讯录：仅展示 saved=1 的群（微信行为）；搜索时同样在可见范围内过滤
+  const visible = groups.value.filter((g) => g.saved !== false)
+  if (!kw) return visible
+  return visible.filter((g) => (g.name || '').toLowerCase().includes(kw))
 })
 
 // ===== 分组折叠：好友/我的群组可点击标题收起展开 =====
@@ -114,6 +117,30 @@ function selectItem(id) {
 
 function sendMessage(id) {
   emit('send-message', id)
+}
+
+// ===== 语音通话 / 视频聊天入口 =====
+// 语音通话：好友 → 切到消息页打开会话并发起真实通话（App/MainWindow 接力）；群聊本期不支持，弹框提示
+function startVoiceCall() {
+  if (currentDetail.value.type === 'group') {
+    showNotice('暂不支持群语音通话')
+    return
+  }
+  emit('start-voice-call', selectedDetailId.value)
+}
+
+// 视频聊天：本期占位入口，点击弹框提示
+function startVideoCall() {
+  showNotice('视频通话暂未开放，敬请期待')
+}
+
+// 轻量弹框提示（替代原生 alert）
+const noticeText = ref('')
+function showNotice(text) {
+  noticeText.value = text
+}
+function closeNotice() {
+  noticeText.value = ''
 }
 </script>
 
@@ -252,7 +279,7 @@ function sendMessage(id) {
             </div>
           </template>
 
-          <!-- 底部功能区：发消息 + 语音/视频（占位，与聊天页资料面板能力一致） -->
+          <!-- 底部功能区：发消息 + 语音通话（真实发起）+ 视频聊天（占位弹框提示） -->
           <div v-if="currentDetail.type !== 'empty'" class="card-actions">
             <button class="action-btn primary" @click="sendMessage(selectedDetailId)">
               <span class="action-icon">
@@ -262,15 +289,15 @@ function sendMessage(id) {
               </span>
               <span class="action-label">{{ currentDetail.type === 'group' ? '进入群聊' : '发消息' }}</span>
             </button>
-            <button class="action-btn" aria-label="语音聊天">
+            <button class="action-btn" aria-label="语音通话" @click="startVoiceCall()">
               <span class="action-icon">
                 <svg viewBox="0 0 24 24" width="22" height="22">
                   <path d="M4.5 6.5c0-1.7 1.3-3 3-3 1 0 1.8.5 2.4 1.3l1.2 1.6c.3.4.3.9 0 1.3l-1.4 1.7a10 10 0 0 0 4.4 4.4l1.7-1.4c.4-.3.9-.3 1.3 0l1.6 1.2c.8.6 1.3 1.4 1.3 2.4 0 1.7-1.3 3-3 3h-.5c-7-1-12.6-6.6-13.5-13.5v-.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
                 </svg>
               </span>
-              <span class="action-label">语音聊天</span>
+              <span class="action-label">语音通话</span>
             </button>
-            <button class="action-btn" aria-label="视频聊天">
+            <button class="action-btn" aria-label="视频聊天" @click="startVideoCall()">
               <span class="action-icon">
                 <svg viewBox="0 0 24 24" width="22" height="22">
                   <rect x="3" y="6" width="13" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6" />
@@ -288,6 +315,14 @@ function sendMessage(id) {
         </div>
       </aside>
     </main>
+
+    <!-- 弹框提示：群语音通话 / 视频聊天占位提示 -->
+    <div v-if="noticeText" class="notice-overlay" @click.self="closeNotice">
+      <div class="notice-modal">
+        <p class="notice-text">{{ noticeText }}</p>
+        <button class="notice-btn" type="button" @click="closeNotice">知道了</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -641,6 +676,52 @@ function sendMessage(id) {
 .action-label {
   font-size: 0.857rem;
   color: var(--im-text-secondary);
+}
+
+/* 弹框提示 */
+.notice-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notice-modal {
+  width: 320px;
+  max-width: calc(100vw - 48px);
+  background: var(--im-surface);
+  border-radius: 12px;
+  padding: 28px 28px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
+}
+
+.notice-text {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--im-text-title);
+  text-align: center;
+}
+
+.notice-btn {
+  min-width: 120px;
+  padding: 8px 0;
+  border-radius: 8px;
+  border: none;
+  background: var(--im-primary);
+  color: #fff;
+  font-size: 0.929rem;
+  cursor: pointer;
+}
+
+.notice-btn:hover {
+  background: var(--im-primary-hover);
 }
 
 /* 空态 */

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math/rand"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,9 @@ type Store interface {
 	IsConversationMember(uid, convID int64) (bool, error)
 	ListConversations(ownerUID int64) ([]*mysql.Conversation, error)
 	ListConversationsChangedSince(ownerUID int64, since time.Time) ([]*mysql.Conversation, error)
-	UpdateConversationLastMsg(ownerUID, targetID int64, lastMsgID int64, text string, t time.Time) error
+	UpdateConversationLastMsg(ownerUID, targetID int64, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error
+	UpdateConversationSettings(ownerUID, convID int64, pinned, muted *int8) error
+	DeleteConversationByID(ownerUID, convID int64) error
 	UpdateConversationSyncedSeq(ownerUID, targetID, seq int64) error
 	CreateMessage(m *mysql.Message) (int64, error)
 	NextSeq(convID int64) (int64, error)
@@ -45,12 +48,19 @@ type Store interface {
 	// P1 性能优化：群聊批量写 + 昵称批量查
 	GetUserNames(uids []int64) map[int64]string
 	EnsureGroupConversationViews(convID, gUID int64, memberUIDs []int64) error
-	UpdateGroupConversationsLastMsg(gUID, lastMsgID int64, text string, t time.Time) error
+	UpdateGroupConversationsLastMsg(gUID, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error
 	UpdateGroupConversationsSyncedSeq(gUID, seq, excludeUID int64) error
-	UpdateGroupConversationsLastMsgExcept(gUID, excludeUID, lastMsgID int64, text string, t time.Time) error
+	UpdateGroupConversationsLastMsgExcept(gUID, excludeUID, lastMsgID int64, text string, t time.Time, senderUID int64, senderName string) error
 	// P2 未读计数：unread_count 列维护（发消息累加、已读清零、撤回递减）
 	BumpConversationUnread(ownerUID, targetID, delta int64) error
 	BumpGroupConversationsUnread(gUID, excludeUID, delta int64) error
+	// G14 群已读人数：聚合 message_reads 中已读游标 >= 消息 seq 的成员数
+	CountRead(convID, seq int64) (int, error)
+	// S6 表情回应：独立表存储（消息不可变 + extra 2KB 上限）
+	AddReaction(id, convID, msgID, uid int64, emoji string) error
+	RemoveReaction(convID, msgID, uid int64, emoji string) error
+	ListReactions(convID int64, msgIDs []int64) (map[int64][]mysql.Reaction, error)
+	ListReactionEmojis(convID, msgID int64) ([]mysql.Reaction, error)
 }
 
 // Publish 消息推送接口：由 gateway 实现，负责把消息投递给接收方（含跨节点）。
@@ -74,7 +84,11 @@ type Service struct {
 	limiter  *rateLimiter // 消息频率风控
 	groupMembers func(gUID int64) ([]int64, error) // 可选；查询群成员 uid 列表（由 social 注入），用于群聊同步各成员会话最后消息
 	seqGen func(convID int64) (int64, error) // 可选；原子 seq 取号源（Redis INCR），nil 时回退本地 MAX+1
-	mediaHosts map[string]bool // 可选；extra.url 允许的媒体资源域名白名单（OSS），空时不校验
+	mediaHosts map[string]bool // 可选：extra.url 允许的媒体资源域名白名单（OSS），空时不校验
+	mentionNotify MentionNotifyFunc // 可选；群消息 @ 提及后为被 @ 成员写通知中心条目（由 social 注入）
+	groupMuteCheck func(gUID, uid int64) (bool, string) // 可选；群禁言守卫（G8，由 social 注入）：返回 (是否禁言, 原因)
+	groupRoleCheck func(gUID, uid int64) (int8, error)  // 可选；群成员角色查询（G2 @所有人鉴权，由 social 注入）
+	reactionNotify func(recipients []int64, data interface{}) // 可选；表情回应推送（S6，由 main 注入 hub 实现）
 }
 
 // 输入长度约束（审计 H3）：防通过 HTTP 通道提交超大消息体造成存储膨胀/慢查询滥用。
@@ -96,6 +110,32 @@ type GroupMembersFunc func(gUID int64) ([]int64, error)
 // SetGroupMembers 运行时注入群成员查询能力（由 social 服务实现，供群聊同步成员会话）。
 func (s *Service) SetGroupMembers(fn GroupMembersFunc) {
 	s.groupMembers = fn
+}
+
+// MentionNotifyFunc @ 提及通知写入签名：为有效被 @ 成员落通知中心条目。
+// mentionedUIDs 已经过发送守卫（仅真实群成员、不含发送者）；preview 为消息内容摘要（非文本为类型占位）。
+type MentionNotifyFunc func(gUID, convID, msgID, senderUID int64, senderName string, mentionedUIDs []int64, preview string)
+
+// SetMentionNotify 运行时注入 @ 提及通知写入能力（由 social 服务实现，写 notifications 表）。
+func (s *Service) SetMentionNotify(fn MentionNotifyFunc) {
+	s.mentionNotify = fn
+}
+
+// SetGroupMuteCheck 运行时注入群禁言守卫（G8，由 social 服务实现）：
+// 返回 (是否禁言, 原因)；nil 时不启用（测试/降级场景）。
+func (s *Service) SetGroupMuteCheck(fn func(gUID, uid int64) (bool, string)) {
+	s.groupMuteCheck = fn
+}
+
+// SetGroupRoleCheck 运行时注入群成员角色查询（G2 @所有人鉴权 / G14 已读人数权限，由 social 服务实现）。
+func (s *Service) SetGroupRoleCheck(fn func(gUID, uid int64) (int8, error)) {
+	s.groupRoleCheck = fn
+}
+
+// SetReactionNotify 运行时注入表情回应推送能力（S6，由 main 用 hub 实现）：
+// 向接收方推送 reaction 帧（单聊对端 / 群聊成员）。
+func (s *Service) SetReactionNotify(fn func(recipients []int64, data interface{})) {
+	s.reactionNotify = fn
 }
 
 // New 创建消息服务。publish 由网关注入，实现消息投递。
@@ -162,7 +202,8 @@ func (s *Service) SendGroupSystemMessage(ownerUID, gUID, convID int64, content, 
 	msg.Seq = seq
 	// 3. 单条 SQL 更新全部成员会话的最后消息（审计 P1：替代逐成员 updateConvLastMsg）。
 	// 系统消息不累加未读（与此前 seq 差值行为一致：不推进 last_synced_seq 即不计未读）。
-	_ = s.store.UpdateGroupConversationsLastMsg(gUID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt)
+	// 发送者传 0/空：系统消息无发送者语义，客户端列表不加前缀。
+	_ = s.store.UpdateGroupConversationsLastMsg(gUID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt, 0, "")
 	// 4. 直接用行数据构造 DTO，避免 toDTO 回查 GetMessage（审计 P1）；系统消息无发送者昵称
 	dto := s.dtoFromRow(convID, msg, "")
 	// 5. 推送给所有成员（含群主）
@@ -200,9 +241,10 @@ func (s *Service) SendGroupSystemMessageTo(gUID, convID int64, content, extra st
 		return
 	}
 	msg.Seq = seq
-	// 只更新接收者的会话视图最后消息（不能用全成员批量 SQL，避免不感知者预览变化）
+	// 只更新接收者的会话视图最后消息（不能用全成员批量 SQL，避免不感知者预览变化）；
+	// 系统消息无发送者语义，发送者传 0/空（客户端列表不加名称前缀）
 	for _, uid := range all {
-		_ = s.store.UpdateConversationLastMsg(uid, gUID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt)
+		_ = s.store.UpdateConversationLastMsg(uid, gUID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt, 0, "")
 	}
 	dto := s.dtoFromRow(convID, msg, "")
 	if s.pushFunc != nil {
@@ -225,6 +267,23 @@ type MessageDTO struct {
 	Extra      string `json:"extra"`       // 扩展 JSON（图片/文件 URL、文件名等元数据）
 	Status     int8   `json:"status"`      // 0 正常 / 1 已撤回
 	CreatedAt  int64  `json:"created_at"`  // Unix 秒
+	Reactions  []ReactionDTO `json:"reactions,omitempty"` // S6 表情回应（历史/增量/回显时携带）
+}
+
+// ReactionDTO 表情回应条目（S6）。uid 为字符串防雪花 ID 精度丢失。
+type ReactionDTO struct {
+	UID   string `json:"uid"`
+	Emoji string `json:"emoji"`
+	Time  int64  `json:"time"` // Unix 秒
+}
+
+// ReactionChange 表情回应变更事件（WS reaction 帧 body / HTTP 返回值）。
+type ReactionChange struct {
+	ConvID int64  `json:"conv_id,string"`
+	MsgID  int64  `json:"msg_id,string"`
+	UID    int64  `json:"uid"`
+	Emoji  string `json:"emoji"`
+	Add    bool   `json:"add"`
 }
 
 // SendReq 发送消息请求。
@@ -306,6 +365,12 @@ func (s *Service) Send(senderUID int64, req *SendReq) (*MessageDTO, bool, error)
 			return nil, false, apperr.Forbidden("你不是群成员，无法发送消息")
 		}
 	}
+	// G8 群禁言守卫（由 social 实现：全员禁言 + 个人禁言，管理员豁免全员禁言）
+	if convType == 2 && s.groupMuteCheck != nil {
+		if muted, reason := s.groupMuteCheck(req.TargetID, senderUID); muted {
+			return nil, false, apperr.Forbidden(reason)
+		}
+	}
 	conv, err := s.store.GetOrCreateConversation(senderUID, req.TargetID, convType, s.genID())
 	if err != nil {
 		return nil, false, apperr.WrapInternal("获取会话失败", err)
@@ -354,9 +419,10 @@ func (s *Service) Send(senderUID int64, req *SendReq) (*MessageDTO, bool, error)
 	// 更新会话的最后消息：
 	//  - 单聊：同时更新发送方与接收方两侧会话视图。
 	//  - 群聊：P1 优化——三条批量 SQL 替代逐成员 3N 次查询/更新（写放大消除）。
+	senderName := s.store.GetUserName(senderUID)
 	if convType == 1 {
-		s.updateConvLastMsg(senderUID, req.TargetID, msg, convType)
-		s.updateConvLastMsg(req.TargetID, senderUID, msg, convType)
+		s.updateConvLastMsg(senderUID, req.TargetID, msg, convType, senderUID, senderName)
+		s.updateConvLastMsg(req.TargetID, senderUID, msg, convType, senderUID, senderName)
 		// 更新接收方已同步游标（LastSyncedSeq），供增量拉取使用。
 		// 注意：只更新接收方，不更新发送方——发送方已读自己的消息，更新会使其误显未读。
 		_ = s.store.UpdateConversationSyncedSeq(req.TargetID, senderUID, msg.Seq)
@@ -373,8 +439,8 @@ func (s *Service) Send(senderUID int64, req *SendReq) (*MessageDTO, bool, error)
 		}
 		// 1) 单条 INSERT IGNORE 补齐缺失的成员会话视图
 		_ = s.store.EnsureGroupConversationViews(conv.ID, req.TargetID, all)
-		// 2) 单条 SQL 更新全部成员视图的最后消息（含发送者）
-		_ = s.store.UpdateGroupConversationsLastMsg(req.TargetID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt)
+		// 2) 单条 SQL 更新全部成员视图的最后消息（含发送者）；同时记录发送者，客户端列表拼 "发送者: 内容" 前缀
+		_ = s.store.UpdateGroupConversationsLastMsg(req.TargetID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt, senderUID, senderName)
 		// 3) 单条 SQL 更新成员已同步游标（排除发送者，避免其误显未读）
 		_ = s.store.UpdateGroupConversationsSyncedSeq(req.TargetID, msg.Seq, senderUID)
 		// 4) 单条 SQL 未读计数 +1（排除发送者）
@@ -382,13 +448,89 @@ func (s *Service) Send(senderUID int64, req *SendReq) (*MessageDTO, bool, error)
 	}
 
 	// 消息体已在内存，直接用行数据构造 DTO，避免 toDTO 回查 GetMessage（审计 P1）
-	dto := s.dtoFromRow(conv.ID, msg, s.store.GetUserName(senderUID))
+	dto := s.dtoFromRow(conv.ID, msg, senderName)
 	// 推送接收方
 	if s.publish != nil {
 		s.publish(conv.ID, dto)
 	}
+	// @ 提及通知：解析 extra.mention_uids，为被 @ 的真实群成员写通知中心条目
+	// （成员集合校验防伪造 @ 骚扰；发送者自身不通知）
+	// G2 @所有人：mention_uids 含 "all" 特殊标记时展开为除发送者外全部成员，
+	// 且仅群主/管理员可用（500 人 uid 展开会超 extra 2KB 上限，故用标记而非展开）
+	if convType == 2 && s.mentionNotify != nil {
+		mentioned, hasAll := parseMentionUIDs(req.Extra)
+		if len(mentioned) > 0 || hasAll {
+			memberSet := make(map[int64]struct{}, len(groupMembers))
+			for _, m := range groupMembers {
+				memberSet[m] = struct{}{}
+			}
+			var valid []int64
+			if hasAll {
+				// @所有人：校验角色（群主/管理员），展开为全部成员（排除发送者）
+				if s.groupRoleCheck != nil {
+					if role, rerr := s.groupRoleCheck(req.TargetID, senderUID); rerr != nil || role > 1 {
+						return nil, false, apperr.Forbidden("仅群主或管理员可 @所有人")
+					}
+				}
+				valid = make([]int64, 0, len(groupMembers)-1)
+				for _, m := range groupMembers {
+					if m != senderUID {
+						valid = append(valid, m)
+					}
+				}
+			} else {
+				valid = make([]int64, 0, len(mentioned))
+				for _, u := range mentioned {
+					if u == senderUID {
+						continue
+					}
+					if _, ok := memberSet[u]; ok {
+						valid = append(valid, u)
+					}
+				}
+			}
+			if len(valid) > 0 {
+				s.mentionNotify(req.TargetID, conv.ID, msg.ID, senderUID, s.store.GetUserName(senderUID), valid, convPreview(msg.Type, msg.Content))
+			}
+		}
+	}
 	log.L().Info("message sent", "conv_id", conv.ID, "seq", seq, "sender", senderUID)
 	return dto, true, nil
+}
+
+// parseMentionUIDs 从消息 extra JSON 中解析 mention_uids（客户端约定字符串数组，防雪花 ID 精度丢失）；
+// 返回 (uid 列表, 是否含 @所有人 "all" 标记)。解析失败/非法项静默跳过（提及通知为增强能力，不影响发送主链路）。
+func parseMentionUIDs(extra string) ([]int64, bool) {
+	if extra == "" {
+		return nil, false
+	}
+	var e struct {
+		MentionUIDs []string `json:"mention_uids"`
+	}
+	if err := json.Unmarshal([]byte(extra), &e); err != nil {
+		return nil, false
+	}
+	hasAll := false
+	out := make([]int64, 0, len(e.MentionUIDs))
+	seen := make(map[int64]struct{}, len(e.MentionUIDs))
+	for _, s := range e.MentionUIDs {
+		trimmed := strings.TrimSpace(s)
+		// G2 @所有人：客户端约定 "all" 标记（不展开 uid，防 extra 2KB 超限）
+		if strings.EqualFold(trimmed, "all") {
+			hasAll = true
+			continue
+		}
+		u, err := strconv.ParseInt(trimmed, 10, 64)
+		if err != nil || u <= 0 {
+			continue
+		}
+		if _, dup := seen[u]; dup {
+			continue
+		}
+		seen[u] = struct{}{}
+		out = append(out, u)
+	}
+	return out, hasAll
 }
 
 // createMessageWithRetry 落库并在 seq 冲突（并发取号）时重新取号重试。
@@ -432,7 +574,7 @@ func (s *Service) createMessageWithRetry(msg *mysql.Message) (int64, error) {
 // errIdempotentHit 哨兵错误：msg_id 幂等命中（消息已存在），Send 层据此返回 isNew=false
 var errIdempotentHit = errors.New("idempotent hit")
 
-func (s *Service) updateConvLastMsg(ownerUID, targetID int64, msg *mysql.Message, convType int8) {
+func (s *Service) updateConvLastMsg(ownerUID, targetID int64, msg *mysql.Message, convType int8, senderUID int64, senderName string) {
 	if convType == 0 {
 		convType = 1
 	}
@@ -441,7 +583,7 @@ func (s *Service) updateConvLastMsg(ownerUID, targetID int64, msg *mysql.Message
 		return
 	}
 	// 会话列表最后一条消息预览：图片/文件/语音/视频等非文本类型直接展示类型占位，而非资源 URL。
-	_ = s.store.UpdateConversationLastMsg(conv.OwnerUID, conv.TargetID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt)
+	_ = s.store.UpdateConversationLastMsg(conv.OwnerUID, conv.TargetID, msg.ID, convPreview(msg.Type, msg.Content), msg.CreatedAt, senderUID, senderName)
 }
 
 // audioExts 可作为 FILE 类型发送的音频扩展名集合（桌面端录音等以文件形式发出）。
@@ -505,6 +647,9 @@ func convPreview(msgType int8, content string) string {
 		return "[视频]"
 	case 6:
 		return "[系统消息]"
+	case 7:
+		// 合并转发（S2）：content 为 JSON 摘要列表，会话列表展示类型占位
+		return "[合并转发]"
 	default:
 		return preview(content)
 	}
@@ -596,9 +741,12 @@ func (s *Service) toConversationDTOs(uid int64, convs []*mysql.Conversation) []*
 			Type:        c.Type,
 			TargetID:    c.TargetID,
 			LastMsg:     c.LastMsgText,
+			LastSenderUID:  c.LastSenderUID,
+			LastSenderName: c.LastSenderName,
 			LastMsgTime: lastMsgTime,
 			Unread:      unread,
 			Muted:       c.Muted == 1,
+			Pinned:      c.Pinned == 1,
 			PeerReadSeq: readSeqs[c.ID], // 群聊/无记录为 0
 			// 已同步水位：客户端据此条件同步（本地已追平则跳过历史拉取，减压服务端）
 			LastSyncedSeq: c.LastSyncedSeq,
@@ -613,9 +761,13 @@ type ConversationDTO struct {
 	Type        int8   `json:"type"`
 	TargetID    int64  `json:"target_id"`
 	LastMsg     string `json:"last_msg"`
+	// 最后消息发送者（群聊列表拼 "发送者: 内容" 前缀；0/空表示系统/无，客户端不加前缀）
+	LastSenderUID  int64  `json:"last_sender_uid"`
+	LastSenderName string `json:"last_sender_name,omitempty"`
 	LastMsgTime int64  `json:"last_msg_time"` // 最后消息 unix 秒时间戳，用于前端排序；无消息为 0
 	Unread      int    `json:"unread"`        // 未读消息数
 	Muted       bool   `json:"muted"`
+	Pinned      bool   `json:"pinned"` // 置顶（会话列表置顶区排序）
 	PeerReadSeq int64  `json:"peer_read_seq"`   // 对端已读游标（单聊），前端据此恢复已读状态；群聊为 0
 	LastSyncedSeq int64 `json:"last_synced_seq"` // 本会话已同步最大 seq，客户端条件同步水位（本地已追平则免拉历史）
 }
@@ -623,6 +775,190 @@ type ConversationDTO struct {
 // MarkRead 已读回执：记录已读 seq 并返回是否需要广播。
 func (s *Service) MarkRead(uid, convID, seq int64) error {
 	return s.store.UpsertReadSeq(uid, convID, seq)
+}
+
+// ReadCount 群消息已读人数（G14，企业微信策略：仅群主/管理员可查）：
+// 校验会话归属 + 群聊类型 + 群主/管理员角色，再按消息 seq 聚合 message_reads。
+func (s *Service) ReadCount(uid, convID, msgID int64) (int, error) {
+	if convID <= 0 || msgID <= 0 {
+		return 0, apperr.BadRequest("参数无效")
+	}
+	// 归属校验：仅会话参与者可查
+	if ok, err := s.store.IsConversationMember(uid, convID); err != nil || !ok {
+		return 0, apperr.Forbidden("无权查看该会话")
+	}
+	conv, err := s.store.GetConversationByID(convID)
+	if err != nil || conv == nil {
+		return 0, apperr.NotFound("会话不存在")
+	}
+	// 仅群聊支持已读人数（单聊对端已读走 PeerReadSeq 游标）
+	if conv.Type != 2 {
+		return 0, apperr.BadRequest("仅群聊支持已读人数展示")
+	}
+	// 仅群主/管理员可查（对齐企业微信策略）
+	if s.groupRoleCheck != nil {
+		if role, rerr := s.groupRoleCheck(conv.TargetID, uid); rerr != nil || role > 1 {
+			return 0, apperr.Forbidden("仅群主或管理员可查看已读人数")
+		}
+	}
+	msg, err := s.store.GetMessage(convID, msgID)
+	if err != nil {
+		return 0, apperr.NotFound("消息不存在")
+	}
+	if msg.Status == 1 {
+		return 0, apperr.BadRequest("消息已撤回")
+	}
+	n, err := s.store.CountRead(convID, msg.Seq)
+	if err != nil {
+		return 0, apperr.WrapInternal("查询已读人数失败", err)
+	}
+	return n, nil
+}
+
+// maxReactionEmojiRunes 单个表情长度上限（VARCHAR(16)，业务层收紧到 8 个字符防超大串）。
+const maxReactionEmojiRunes = 8
+
+// SetReaction 添加/移除表情回应（S6）：
+//   - 仅会话成员可操作；目标消息必须存在且未撤回；
+//   - 移除时校验本人已添加过该反应（防删他人反应）；
+//   - 成功后向会话接收方推送 reaction 帧（单聊对端 / 群聊成员，含操作者自身？——操作者由本地即时更新，不重复推）。
+func (s *Service) SetReaction(uid, convID, msgID int64, emoji string, add bool) (*ReactionChange, error) {
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" || len([]rune(emoji)) > maxReactionEmojiRunes {
+		return nil, apperr.BadRequest("表情无效")
+	}
+	if ok, err := s.store.IsConversationMember(uid, convID); err != nil || !ok {
+		return nil, apperr.Forbidden("无权操作该会话")
+	}
+	msg, err := s.store.GetMessage(convID, msgID)
+	if err != nil {
+		return nil, apperr.NotFound("消息不存在")
+	}
+	if msg.Status == 1 {
+		return nil, apperr.BadRequest("消息已撤回，无法回应")
+	}
+	if add {
+		if err := s.store.AddReaction(s.genID(), convID, msgID, uid, emoji); err != nil {
+			return nil, apperr.WrapInternal("添加表情回应失败", err)
+		}
+	} else {
+		if err := s.store.RemoveReaction(convID, msgID, uid, emoji); err != nil {
+			return nil, apperr.WrapInternal("移除表情回应失败", err)
+		}
+	}
+	change := &ReactionChange{ConvID: convID, MsgID: msgID, UID: uid, Emoji: emoji, Add: add}
+	// 推送接收方：单聊对端 / 群聊其他成员（操作者本地即时更新，不重复推）
+	if s.reactionNotify != nil {
+		recipients := s.reactionRecipients(uid, convID)
+		s.reactionNotify(recipients, change)
+	}
+	return change, nil
+}
+
+// reactionRecipients 计算表情回应推送接收方：单聊对端（非操作者一方）/ 群聊除操作者外成员。
+func (s *Service) reactionRecipients(uid, convID int64) []int64 {
+	conv, err := s.store.GetConversationByID(convID)
+	if err != nil || conv == nil {
+		return nil
+	}
+	if conv.Type == 1 {
+		peer := conv.OwnerUID
+		if peer == uid {
+			peer = conv.TargetID
+		}
+		if peer > 0 && peer != uid {
+			return []int64{peer}
+		}
+		return nil
+	}
+	if s.groupMembers == nil {
+		return nil
+	}
+	members, err := s.groupMembers(conv.TargetID)
+	if err != nil {
+		return nil
+	}
+	out := make([]int64, 0, len(members)-1)
+	for _, m := range members {
+		if m != uid {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// GetReactions 查询单条消息的全部表情回应（S6，仅会话成员可查）。
+func (s *Service) GetReactions(uid, convID, msgID int64) ([]ReactionDTO, error) {
+	if ok, err := s.store.IsConversationMember(uid, convID); err != nil || !ok {
+		return nil, apperr.Forbidden("无权查看该会话")
+	}
+	list, err := s.store.ListReactionEmojis(convID, msgID)
+	if err != nil {
+		return nil, apperr.WrapInternal("查询表情回应失败", err)
+	}
+	out := reactionsToDTOs(list)
+	if out == nil {
+		out = []ReactionDTO{} // 空列表返回 [] 而非 null（客户端 Array.isArray 判断友好）
+	}
+	return out, nil
+}
+
+// reactionsToDTOs 行数据 → DTO（uid 转字符串防精度丢失）。
+func reactionsToDTOs(list []mysql.Reaction) []ReactionDTO {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]ReactionDTO, 0, len(list))
+	for _, r := range list {
+		out = append(out, ReactionDTO{UID: strconv.FormatInt(r.UID, 10), Emoji: r.Emoji, Time: r.CreatedAt.Unix()})
+	}
+	return out
+}
+
+// UpdateConversationSettings 更新会话置顶/免打扰（仅会话归属者本人视图，防越权）。
+// pinned/muted 为 nil 表示不更新对应字段；取值仅允许 0/1。
+func (s *Service) UpdateConversationSettings(uid, convID int64, pinned, muted *int8) error {
+	if pinned == nil && muted == nil {
+		return apperr.BadRequest("没有要更新的设置项")
+	}
+	for _, v := range []*int8{pinned, muted} {
+		if v != nil && *v != 0 && *v != 1 {
+			return apperr.BadRequest("设置值无效")
+		}
+	}
+	// 归属校验必须带 owner 维度：conv_id 为共享业务 ID（单聊双方/群全体成员各一行视图，主键是
+	// (owner_uid, target_id)），GetConversationByID 可能取到他人视图行导致误判越权。
+	ok, err := s.store.IsConversationMember(uid, convID)
+	if err != nil {
+		return apperr.WrapInternal("查询会话失败", err)
+	}
+	if !ok {
+		return apperr.NotFound("会话不存在")
+	}
+	if err := s.store.UpdateConversationSettings(uid, convID, pinned, muted); err != nil {
+		return apperr.WrapInternal("更新会话设置失败", err)
+	}
+	return nil
+}
+
+// DeleteConversation 删除用户自己的会话视图（用户主动删除会话）：
+// 仅删会话行不删消息，再次收发消息时 GetOrCreateConversation 自动重建视图。
+func (s *Service) DeleteConversation(uid, convID int64) error {
+	if convID <= 0 {
+		return apperr.BadRequest("会话 ID 无效")
+	}
+	// 归属校验（同 UpdateConversationSettings：防删他人视图行）
+	ok, err := s.store.IsConversationMember(uid, convID)
+	if err != nil {
+		return apperr.WrapInternal("查询会话失败", err)
+	}
+	if !ok {
+		return apperr.NotFound("会话不存在")
+	}
+	if err := s.store.DeleteConversationByID(uid, convID); err != nil {
+		return apperr.WrapInternal("删除会话失败", err)
+	}
+	return nil
 }
 
 // GetConversationPeer 返回会话中对端用户 uid，用于已读回执广播给消息发送方。
@@ -715,22 +1051,32 @@ func (s *Service) dtoFromRow(convID int64, m *mysql.Message, senderName string) 
 	}
 }
 
-// msgsToDTOs 批量构造 DTO：发送者昵称一次批量查询，消除逐条 GetUserName 的 N+1（审计 P1）。
+// msgsToDTOs 批量构造 DTO：发送者昵称一次批量查询，消除逐条 GetUserName 的 N+1（审计 P1）；
+// S6：表情回应一次批量聚合（按 msg_id），避免逐条查 reactions 的 N+1。
 func (s *Service) msgsToDTOs(convID int64, msgs []*mysql.Message) []*MessageDTO {
 	uidSet := make(map[int64]struct{})
+	msgIDs := make([]int64, 0, len(msgs))
 	for _, m := range msgs {
 		if m.SenderUID > 0 {
 			uidSet[m.SenderUID] = struct{}{}
 		}
+		msgIDs = append(msgIDs, m.ID)
 	}
 	uids := make([]int64, 0, len(uidSet))
 	for uid := range uidSet {
 		uids = append(uids, uid)
 	}
 	names := s.store.GetUserNames(uids)
+	// S6：批量查表情回应（失败降级为空 map，不阻断历史拉取）
+	reactionMap := map[int64][]mysql.Reaction{}
+	if rm, rerr := s.store.ListReactions(convID, msgIDs); rerr == nil {
+		reactionMap = rm
+	}
 	list := make([]*MessageDTO, 0, len(msgs))
 	for _, m := range msgs {
-		list = append(list, s.dtoFromRow(convID, m, names[m.SenderUID]))
+		dto := s.dtoFromRow(convID, m, names[m.SenderUID])
+		dto.Reactions = reactionsToDTOs(reactionMap[m.ID])
+		list = append(list, dto)
 	}
 	return list
 }
@@ -851,16 +1197,17 @@ func (s *Service) revertConvLastMsg(convID, senderUID, msgID int64) {
 		if peer == senderUID {
 			peer = conv.TargetID
 		}
-		// 发送方视图 (owner=senderUID, target=peer)
-		s.updateConvLastMsg(senderUID, peer, senderView, 1)
+		// 发送方视图 (owner=senderUID, target=peer)；撤回文案无发送者语义，发送者传 0/空
+		s.updateConvLastMsg(senderUID, peer, senderView, 1, 0, "")
 		// 对端视图 (owner=peer, target=senderUID)
-		s.updateConvLastMsg(peer, senderUID, peerView, 1)
+		s.updateConvLastMsg(peer, senderUID, peerView, 1, 0, "")
 		return
 	}
 	// 群聊（审计 P1：两条批量 SQL 替代逐成员 updateConvLastMsg 循环）：
-	// 发送方视图显示"你撤回了一条消息"，其余成员视图显示"对方撤回了一条消息"
-	_ = s.store.UpdateConversationLastMsg(senderUID, conv.TargetID, msgID, "你撤回了一条消息", now)
-	_ = s.store.UpdateGroupConversationsLastMsgExcept(conv.TargetID, senderUID, msgID, "对方撤回了一条消息", now)
+	// 发送方视图显示"你撤回了一条消息"，其余成员视图显示"对方撤回了一条消息"；
+	// 撤回文案无发送者语义，批量视图发送者置 0/空，避免列表给撤回文案加名称前缀。
+	_ = s.store.UpdateConversationLastMsg(senderUID, conv.TargetID, msgID, "你撤回了一条消息", now, 0, "")
+	_ = s.store.UpdateGroupConversationsLastMsgExcept(conv.TargetID, senderUID, msgID, "对方撤回了一条消息", now, 0, "")
 }
 
 // refreshMediaURL 对图片/文件消息的 extra 重新生成有效的下载 URL。

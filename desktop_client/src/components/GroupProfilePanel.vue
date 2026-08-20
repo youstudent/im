@@ -1,7 +1,10 @@
 <script setup>
 // 群聊资料面板（参照设计稿「主窗口-群聊」）：
-// 群头像/群名编辑/公告/群文件/成员列表/邀请/群设置/退出群聊
+// 群头像/群名编辑/公告/群文件/成员列表/邀请/群设置/群昵称/转让群主/退出群聊
 // gp 为 useGroupPanel 的 reactive 包装对象，状态与方法均由其提供
+import { computed } from 'vue'
+import MemberPickerModal from './MemberPickerModal.vue'
+
 const props = defineProps({
   gp: { type: Object, required: true },
   muteDnd: { type: Boolean, default: false },
@@ -9,6 +12,18 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
+
+// 当前登录 uid：转让群主候选列表排除自己
+function myUid() {
+  try {
+    return String(JSON.parse(localStorage.getItem('workchat:me') || '{}').uid || '')
+  } catch {
+    return ''
+  }
+}
+const transferCandidates = computed(() =>
+  (props.gp.groupMeta.members || []).filter((m) => m.uid != null && String(m.uid) !== myUid())
+)
 </script>
 
 <template>
@@ -61,6 +76,34 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
 
   <div class="divider-line"></div>
 
+  <!-- 我在本群的昵称（微信同款）：任何成员可设，展示优先级 备注 > 群昵称 > 用户昵称 -->
+  <div class="group-section">
+    <div class="section-title">
+      <svg viewBox="0 0 16 16" width="16" height="16">
+        <circle cx="8" cy="5.5" r="2.6" fill="none" stroke="currentColor" stroke-width="1.3" />
+        <path d="M3.2 13.2c0-2.3 2.2-3.8 4.8-3.8s4.8 1.5 4.8 3.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+      </svg>
+      <span>我在本群的昵称</span>
+      <button v-if="!gp.editingMyNickname" class="section-more" @click="gp.startEditMyNickname()">编辑 ›</button>
+    </div>
+    <template v-if="gp.editingMyNickname">
+      <!-- 编辑行：输入框与保存/取消同行展示 -->
+      <div class="nickname-edit-row">
+        <input
+          class="remark-input"
+          v-model="gp.myNicknameDraft"
+          maxlength="32"
+          placeholder="输入群内昵称（留空恢复昵称）"
+          @keydown.enter.prevent="gp.saveMyNickname()"
+          @keydown.esc="gp.editingMyNickname = false"
+        />
+        <button class="remark-btn primary" :disabled="gp.savingNickname" @click="gp.saveMyNickname()">保存</button>
+        <button class="remark-btn" :disabled="gp.savingNickname" @click="gp.editingMyNickname = false">取消</button>
+      </div>
+    </template>
+    <p v-else class="announcement-text">{{ gp.groupInfo.myNickname || '未设置（使用我的昵称）' }}</p>
+  </div>
+
   <!-- 群公告摘要：群主/管理员可编辑 -->
   <div class="group-section">
     <div class="section-title">
@@ -87,28 +130,7 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
     <p v-else class="announcement-text">{{ gp.groupMeta.announcement || '暂无公告' }}</p>
   </div>
 
-  <!-- 群文件入口 -->
-  <div class="group-section">
-    <div class="section-title">
-      <svg viewBox="0 0 16 16" width="16" height="16">
-        <path d="M3 3h4l1.5 1.5H13a1 1 0 0 1 1 1v7.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-      </svg>
-      <span>群文件</span>
-      <span class="section-more">查看全部 ›</span>
-    </div>
-    <div class="file-list">
-      <div v-for="(f, fi) in gp.groupMeta.files.slice(0, 3)" :key="fi" class="file-item">
-        <svg viewBox="0 0 16 16" width="16" height="16" class="file-ico">
-          <path d="M4 2.5h6l2.5 2.5v8.5H4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-          <path d="M10 2.5v3H13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-        </svg>
-        <div class="file-meta">
-          <span class="file-name">{{ f.name }}</span>
-          <span class="file-size">{{ f.size }}</span>
-        </div>
-      </div>
-    </div>
-  </div>
+  <!-- 图片与文件（G9/S8）：已取消展示 -->
 
   <!-- 群成员列表：支持搜索 + 上下滚动 -->
   <div class="group-section member-section">
@@ -147,7 +169,7 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
       <p>未找到匹配的群成员</p>
     </div>
 
-    <!-- 可滚动的成员列表 -->
+    <!-- 可滚动的成员列表：角色标签（群主/管理员）+ 有管理权限者 hover 显示设管理员/移除按钮 -->
     <div v-else class="member-scroll">
       <div class="member-grid">
         <div
@@ -158,7 +180,41 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
           <div class="member-avatar" :style="{ background: member.color }">
             <span>{{ member.avatar }}</span>
           </div>
-          <span class="member-name" :title="member.name">{{ member.name }}</span>
+          <span class="member-name" :title="gp.memberDisplayName(member)">
+            {{ gp.memberDisplayName(member) }}
+            <em v-if="member.role === 0" class="role-tag owner">群主</em>
+            <em v-else-if="member.role === 1" class="role-tag admin">管理员</em>
+            <em v-if="member.mutedUntil > Date.now()" class="role-tag muted">已禁言</em>
+          </span>
+          <!-- 成员管理操作（hover 显示）：群主可设/撤管理员与移除；管理员仅可移除普通成员；禁言（G8）两者均可对普通成员 -->
+          <div v-if="gp.canOperateMember(member)" class="member-ops">
+            <button
+              v-if="gp.isGroupOwner"
+              class="member-op-btn"
+              :title="member.role === 1 ? '撤销管理员' : '设为管理员'"
+              @click.stop="gp.setMemberRole(member, member.role === 1 ? 2 : 1)"
+            >
+              <svg viewBox="0 0 16 16" width="12" height="12">
+                <path d="M8 1.8l1.8 3.9 4.2.5-3.1 2.9.8 4.1L8 11.2l-3.7 2 .8-4.1L2 6.2l4.2-.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <button
+              class="member-op-btn"
+              :title="member.mutedUntil > Date.now() ? '解除禁言' : '禁言'"
+              @click.stop="gp.muteMember(member, member.mutedUntil > Date.now() ? 0 : Date.now() + 24 * 60 * 60 * 1000)"
+            >
+              <svg viewBox="0 0 16 16" width="12" height="12">
+                <path d="M3 7v4a5 5 0 0 0 10 0V7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                <path d="M3 8a5 5 0 0 1 10 0" fill="none" stroke="currentColor" stroke-width="1.3" />
+                <line x1="8" y1="2" x2="8" y2="4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+              </svg>
+            </button>
+            <button class="member-op-btn danger" title="移除成员" @click.stop="gp.removeMember(member)">
+              <svg viewBox="0 0 16 16" width="12" height="12">
+                <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -196,7 +252,23 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
     <div class="info-row clickable" @click="gp.askLeaveGroup()">
       <span class="danger-text">{{ gp.leavingGroup ? '退出中…' : '退出群聊' }}</span>
     </div>
+    <!-- 转让群主：仅群主可见（后端鉴权兑底），转让后原群主自动变普通成员 -->
+    <div v-if="gp.isGroupOwner" class="info-row clickable" @click="gp.openTransferModal()">
+      <span class="info-value">转让群主</span>
+      <span class="section-more">›</span>
+    </div>
   </div>
+
+  <!-- 转让群主：成员选择弹窗（排除自己） -->
+  <MemberPickerModal
+    v-if="gp.showTransferModal"
+    :members="transferCandidates"
+    title="选择新群主"
+    confirm-text="确认转让"
+    :loading="gp.transferring"
+    @close="gp.showTransferModal = false"
+    @confirm="gp.confirmTransfer($event)"
+  />
 </template>
 
 <style scoped>
@@ -342,6 +414,13 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
   margin-top: 8px;
 }
 
+/* 我在本群的昵称编辑行：输入框自适应拉伸，保存/取消同行右置 */
+.nickname-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* 群文件入口 */
 .file-list {
   display: flex;
@@ -386,10 +465,10 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
   color: var(--im-text-muted);
 }
 
-/* 群成员网格 */
+/* 群成员网格：一行两个（群主/管理员优先展示，其余按入群时间） */
 .member-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
 
@@ -401,6 +480,7 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
   padding: 8px 4px;
   border-radius: 8px;
   cursor: pointer;
+  position: relative;
 }
 
 .member-cell:hover {
@@ -516,5 +596,81 @@ const emit = defineEmits(['update:muteDnd', 'open-search', 'toggle-no-persist'])
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+
+/* 角色标签：群主金色 / 管理员橙色（微信风格） */
+.role-tag {
+  font-style: normal;
+  font-size: 0.643rem;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  margin-left: 2px;
+  vertical-align: 1px;
+}
+
+.role-tag.owner {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.role-tag.admin {
+  color: #c2612c;
+  background: rgba(249, 115, 22, 0.12);
+}
+
+/* G8 禁言标签：灰色底，与角色标签区分 */
+.role-tag.muted {
+  color: var(--im-text-secondary);
+  background: var(--im-surface-2);
+}
+
+:global([data-theme='dark']) .role-tag.owner {
+  color: #fbbf24;
+}
+
+:global([data-theme='dark']) .role-tag.admin {
+  color: #fb923c;
+}
+
+:global([data-theme='dark']) .role-tag.muted {
+  color: #94a3b8;
+}
+
+/* 成员管理操作：默认隐藏，hover 成员卡片时右上角浮现 */
+.member-ops {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: none;
+  gap: 3px;
+}
+
+.member-cell:hover .member-ops {
+  display: flex;
+}
+
+.member-op-btn {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--im-border);
+  border-radius: 6px;
+  background: var(--im-surface);
+  color: var(--im-text-secondary);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.member-op-btn:hover {
+  color: var(--im-primary);
+  border-color: var(--im-primary);
+}
+
+.member-op-btn.danger:hover {
+  color: var(--im-danger, #ef4444);
+  border-color: var(--im-danger, #ef4444);
 }
 </style>

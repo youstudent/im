@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/rand"
 	"strings"
+	"time"
 
 	apperr "im/service/internal/pkg/err"
 	"im/service/internal/store/mysql"
@@ -23,6 +24,7 @@ type Store interface {
 	GetFriendRequest(id int64) (*mysql.FriendRequest, error)
 	ListFriendRequests(toUID int64) ([]*mysql.FriendRequest, error)
 	UpdateFriendRequestStatus(id int64, status int8) error
+	HasPendingFriendRequest(fromUID, toUID int64) (bool, error)
 	// 群
 	CreateGroup(g *mysql.Group) error
 	GetGroupByGUID(gUID int64) (*mysql.Group, error)
@@ -31,6 +33,20 @@ type Store interface {
 	IsGroupMember(gUID, uid int64) (bool, error)
 	GetGroupMemberRole(gUID, uid int64) (int8, error)
 	ListGroupMembers(gUID int64) ([]int64, error)
+	// 群成员角色管理（设/撤管理员）与批量角色查询（群资料页标签展示）
+	UpdateGroupMemberRole(gUID, uid int64, role int8) error
+	ListGroupMemberRoles(gUID int64) (map[int64]int8, error)
+	// 转让群主与群内昵称（第二期）
+	TransferGroupOwner(gUID, oldOwnerUID, newOwnerUID int64) error
+	UpdateGroupMemberNickname(gUID, uid int64, nickname string) error
+	ListGroupMemberNicknames(gUID int64) (map[int64]string, error)
+	// 第三期（P2）：群设置（入群确认/全员禁言）、成员禁言、保存到通讯录
+	UpdateGroupSettings(gUID int64, inviteConfirm, muteAll *int8) error
+	GetGroupMuteState(gUID int64) (int8, error)
+	UpdateMemberMutedUntil(gUID, uid int64, until int64) error
+	ListGroupMemberMutes(gUID int64) (map[int64]int64, error)
+	UpdateGroupMemberSaved(gUID, uid int64, saved int8) error
+	ListGroupMemberSaved(uid int64, gUIDs []int64) (map[int64]int8, error)
 	// P1 性能优化：好友/群列表批量查，消除逐条 N+1
 	GetUsersByUIDs(uids []int64) map[int64]*mysql.User
 	GetGroupsByGUIDs(gUIDs []int64) map[int64]*mysql.Group
@@ -108,8 +124,16 @@ type FriendRequestDTO struct {
 	Nickname string `json:"nickname"`
 }
 
-// SearchUser 按手机号/邮箱/昵称搜索用户（用于加好友），返回用户 uid 信息。
-func (s *Service) SearchUser(account string) (*FriendDTO, error) {
+// UserSearchDTO 搜索结果（附带与当前用户的关系状态，供前端按钮置灰展示）。
+type UserSearchDTO struct {
+	*FriendDTO
+	IsFriend    bool `json:"is_friend"`    // 是否已是好友
+	RequestSent bool `json:"request_sent"` // 我是否已发送待处理的好友申请
+}
+
+// SearchUser 按手机号/邮箱/昵称搜索用户（用于加好友），返回用户 uid 信息，
+// 并附带与调用者（callerUID）的关系状态：已是好友 / 已发送待处理申请。
+func (s *Service) SearchUser(callerUID int64, account string) (*UserSearchDTO, error) {
 	if account == "" {
 		return nil, apperr.BadRequest("搜索关键字不能为空")
 	}
@@ -123,12 +147,21 @@ func (s *Service) SearchUser(account string) (*FriendDTO, error) {
 		}
 		u = list[0]
 	}
-	return &FriendDTO{
-		UID:      u.UID,
-		Nickname: u.Nickname,
-		Avatar:   u.Avatar,
-		Remark:   u.Account,
-	}, nil
+	dto := &UserSearchDTO{
+		FriendDTO: &FriendDTO{UID: u.UID, Nickname: u.Nickname, Avatar: u.Avatar, Remark: u.Account},
+	}
+	// 关系状态查询失败不阻断搜索（发送申请接口仍会兜底拦截）
+	if callerUID > 0 && callerUID != u.UID {
+		if ok, aerr := s.store.AreFriends(callerUID, u.UID); aerr == nil {
+			dto.IsFriend = ok
+		}
+		if !dto.IsFriend {
+			if sent, perr := s.store.HasPendingFriendRequest(callerUID, u.UID); perr == nil {
+				dto.RequestSent = sent
+			}
+		}
+	}
+	return dto, nil
 }
 
 // ListFriends 好友列表（P1 优化：昵称/头像一次批量查，消除逐好友 GetUserByUID 的 N+1）。
@@ -200,7 +233,8 @@ func (s *Service) SendFriendRequest(fromUID, toUID int64, message string) error 
 		Summary: from.Nickname + " 请求添加你为好友", Action: `{"req_id":"` + itoa(id) + `"}`,
 	})
 	if s.notify != nil {
-		s.notify(toUID, "friend.request", ginMap("from_uid", fromUID, "message", message))
+		// req_id/nickname 供客户端实时弹框展示与直接同意/拒绝（无需再查申请列表）
+		s.notify(toUID, "friend.request", ginMap("req_id", itoa(id), "from_uid", fromUID, "nickname", from.Nickname, "message", message))
 	}
 	return nil
 }
@@ -334,7 +368,15 @@ type GroupDTO struct {
 	MemberCount int    `json:"member_count"`
 	Avatar    string   `json:"avatar,omitempty"`
 	Members   []int64  `json:"members,omitempty"`
+	MemberRoles map[int64]int8 `json:"member_roles,omitempty"` // 成员角色映射（uid → 0 群主/1 管理员/2 成员，仅 GetGroup 填充）
+	MemberNicknames map[int64]string `json:"member_nicknames,omitempty"` // 群内昵称映射（uid → 昵称，仅已设置的，仅 GetGroup 填充）
+	MemberMutes map[int64]int64 `json:"member_mutes,omitempty"` // 成员禁言截止映射（uid → unix 毫秒，0=未禁言，仅 GetGroup 填充）
+	MyNickname string  `json:"my_nickname,omitempty"` // 请求者的群内昵称（未设置为空，仅 GetGroup 填充）
 	MyRole    int8     `json:"my_role"` // 请求者在群内的角色：0 群主 / 1 管理员 / 2 成员（仅 GetGroup 填充）
+	InviteConfirm int8  `json:"invite_confirm"` // 邀请需确认（G7）
+	MuteAll       int8  `json:"mute_all"`       // 全员禁言（G8）
+	MyMutedUntil  int64 `json:"my_muted_until,omitempty"` // 我的禁言截止（unix 毫秒，0=未禁言，仅 GetGroup 填充）
+	Saved         int8  `json:"saved"` // 我的"保存到通讯录"开关（G10，默认 1）
 }
 
 // CreateGroup 建群（邀请成员）。avatar 为群头像 URL，可为空。
@@ -394,6 +436,8 @@ func (s *Service) CreateGroup(ownerUID int64, name string, memberUIDs []int64, a
 }
 
 // InviteToGroup 邀请成员入群（需已是群成员）。
+// G7 入群确认：群开启 invite_confirm 时邀请不直接入群，改为向群主/管理员发待确认通知
+// （notifications type=group_invite_confirm + WS group.invite_pending），同意后由 DecideInvite 入群。
 func (s *Service) InviteToGroup(operatorUID, gUID int64, memberUIDs []int64) error {
 	ok, err := s.store.IsGroupMember(gUID, operatorUID)
 	if err != nil || !ok {
@@ -404,31 +448,153 @@ func (s *Service) InviteToGroup(operatorUID, gUID int64, memberUIDs []int64) err
 	if err != nil {
 		return apperr.NotFound("群不存在")
 	}
-	convID := g.ConvID
 	// 审计 P0：过滤无效邀请目标（不存在/已在群/重复），并校验群人数上限
 	existing, _ := s.store.ListGroupMembers(gUID)
 	memberUIDs = filterInvitees(memberUIDs, operatorUID, existing, s.store)
+	if len(memberUIDs) == 0 {
+		return nil
+	}
 	if len(existing)+len(memberUIDs) > maxGroupMembers {
 		return apperr.BadRequest("群成员已达上限，无法继续邀请")
 	}
+	// G7 入群确认：不直接入群，向群主/管理员发送待确认通知（不落系统消息、不建会话视图）
+	if g.InviteConfirm == 1 {
+		if err := s.notifyInvitePending(g, operatorUID, memberUIDs); err != nil {
+			return err
+		}
+		return apperr.Conflict("该群开启了入群确认，已通知群主/管理员处理")
+	}
+	convID := g.ConvID
+	s.addInvitedMembers(operatorUID, g, convID, memberUIDs)
+	return nil
+}
+
+// notifyInvitePending 入群确认（G7）：向群主/管理员写通知并推 WS 事件，
+// 等待其同意/拒绝（action 携带群号/邀请人/被邀请人，供通知中心直接操作）。
+func (s *Service) notifyInvitePending(g *mysql.Group, inviterUID int64, inviteeUIDs []int64) error {
+	if len(inviteeUIDs) == 0 {
+		return nil
+	}
+	// 获取群主/管理员列表（去重：群主可能同时出现在管理员集合）
+	adminSet := map[int64]struct{}{}
+	roles, err := s.store.ListGroupMemberRoles(g.GUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	for uid, role := range roles {
+		if role <= 1 {
+			adminSet[uid] = struct{}{}
+		}
+	}
+	if len(adminSet) == 0 {
+		return nil
+	}
+	inviterName := s.Info(inviterUID)
+	if inviterName == "" {
+		inviterName = "用户" + itoa(inviterUID)
+	}
+	inviteeNames := make([]string, 0, len(inviteeUIDs))
+	for _, u := range inviteeUIDs {
+		n := s.Info(u)
+		if n == "" {
+			n = "用户" + itoa(u)
+		}
+		inviteeNames = append(inviteeNames, n)
+	}
+	action, jerr := json.Marshal(map[string]interface{}{
+		"g_uid":        itoa(g.GUID),
+		"group_name":   g.Name,
+		"inviter_uid":  inviterUID,
+		"inviter_name": inviterName,
+		"invitee_uids": inviteeUIDs,
+	})
+	if jerr != nil {
+		action = nil
+	}
+	actionStr := ""
+	if action != nil {
+		actionStr = string(action)
+	}
+	summary := inviterName + " 邀请 " + strings.Join(inviteeNames, "、") + " 加入群「" + g.Name + "」，请确认"
+	for uid := range adminSet {
+		_ = s.store.CreateNotification(&mysql.Notification{
+			ID: s.genID(), UID: uid, Type: "group_invite_confirm",
+			Title: "入群申请待确认", Summary: summary, Action: actionStr,
+		})
+		if s.notify != nil {
+			s.notify(uid, "group.invite_pending", ginMap("g_uid", g.GUID, "group_name", g.Name,
+				"inviter_uid", inviterUID, "inviter_name", inviterName, "invitee_uids", inviteeUIDs))
+		}
+	}
+	return nil
+}
+
+// addInvitedMembers 执行邀请入群落地：加成员行/会话视图/系统消息/通知被邀请者（建群与入群确认同意共用）。
+func (s *Service) addInvitedMembers(operatorUID int64, g *mysql.Group, convID int64, memberUIDs []int64) {
 	var invited []int64
 	for _, m := range memberUIDs {
-		_ = s.store.AddGroupMember(gUID, m, 2)
+		_ = s.store.AddGroupMember(g.GUID, m, 2)
 		invited = append(invited, m)
 		_ = s.store.CreateNotification(&mysql.Notification{
 			ID: s.genID(), UID: m, Type: "invite", Title: "群邀请", Summary: "你被邀请加入群「" + g.Name + "」",
 		})
 		if s.notify != nil {
-			s.notify(m, "group.invite", ginMap("g_uid", gUID, "group_name", g.Name))
+			s.notify(m, "group.invite", ginMap("g_uid", g.GUID, "group_name", g.Name))
 		}
 	}
-	// 邀请系统消息：推送给全体群成员（含老成员），客户端按身份渲染：
-	// 被邀请者看到"你被邀请加入群聊…"，邀请者看到"你邀请了xx进入群聊"，其他成员看到"xx邀请了xx进入群聊"
+	// 邀请系统消息：推送给全体群成员（含老成员），客户端按身份渲染
 	if len(invited) > 0 && s.groupSysMsg != nil {
 		content, extra := s.inviteSysMsg(operatorUID, invited, g.Name)
-		members, _ := s.store.ListGroupMembers(gUID)
-		s.groupSysMsg(operatorUID, gUID, convID, content, extra, members)
+		members, _ := s.store.ListGroupMembers(g.GUID)
+		s.groupSysMsg(operatorUID, g.GUID, convID, content, extra, members)
 	}
+}
+
+// DecideInvite 处理入群确认（G7）：仅群主/管理员可操作。
+// accept=true 走现有邀请落地链路（成员入群 + 系统消息 + 会话视图）；
+// accept=false 通知邀请者"入群申请被拒绝"；已入群者幂等跳过。
+func (s *Service) DecideInvite(deciderUID, gUID, inviteeUID int64, accept bool) error {
+	role, err := s.store.GetGroupMemberRole(gUID, deciderUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if role < 0 || role > 1 {
+		return apperr.Forbidden("仅群主或管理员可处理入群申请")
+	}
+	g, err := s.store.GetGroupByGUID(gUID)
+	if err != nil {
+		return apperr.NotFound("群不存在")
+	}
+	// 已在群：幂等返回（客户端重复点击同意场景）
+	if in, ierr := s.store.IsGroupMember(gUID, inviteeUID); ierr == nil && in {
+		return nil
+	}
+	inviteeName := s.Info(inviteeUID)
+	if inviteeName == "" {
+		inviteeName = "用户" + itoa(inviteeUID)
+	}
+	if !accept {
+		// 拒绝：通知邀请者（type=system，无需定向到具体邀请人，摘要已含申请人）
+		_ = s.store.CreateNotification(&mysql.Notification{
+			ID: s.genID(), UID: deciderUID, Type: "system",
+			Title: "入群申请已拒绝", Summary: "你已拒绝 " + inviteeName + " 加入群「" + g.Name + "」",
+		})
+		return nil
+	}
+	// 同意：目标必须是真实用户（防对任意 uid 拉入群），且群未达上限
+	if _, err := s.store.GetUserByUID(inviteeUID); err != nil {
+		return apperr.BadRequest("目标用户不存在")
+	}
+	existing, _ := s.store.ListGroupMembers(gUID)
+	if len(existing)+1 > maxGroupMembers {
+		return apperr.BadRequest("群成员已达上限")
+	}
+	s.addInvitedMembers(deciderUID, g, g.ConvID, []int64{inviteeUID})
+	// 通知被拒绝/同意方（邀请者视角）：通知中心可见入群成功
+	_ = s.store.CreateNotification(&mysql.Notification{
+		ID: s.genID(), UID: deciderUID, Type: "system",
+		Title: "入群申请已通过", Summary: inviteeName + " 已加入群「" + g.Name + "」",
+	})
 	return nil
 }
 
@@ -543,6 +709,119 @@ func (s *Service) LeaveGroup(uid, gUID int64) error {
 	return nil
 }
 
+// RemoveMember 移除群成员（微信规则）：
+//   - 群主可移除除自己外的任何成员；管理员仅可移除普通成员（不可动群主与其他管理员）；
+//   - 不能移除自己（退群走 LeaveGroup）；
+//   - 移除后：删成员行/会话视图 → 剩余成员共享历史落“移出”系统消息 → 被移除者推送 group.kicked 事件清理会话。
+func (s *Service) RemoveMember(operatorUID, gUID, targetUID int64) error {
+	if operatorUID == targetUID {
+		return apperr.BadRequest("不能移除自己，退出群聊请使用退群功能")
+	}
+	opRole, err := s.store.GetGroupMemberRole(gUID, operatorUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if opRole < 0 || opRole > 1 {
+		return apperr.Forbidden("仅群主或管理员可移除群成员")
+	}
+	targetRole, err := s.store.GetGroupMemberRole(gUID, targetUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if targetRole < 0 {
+		return apperr.NotFound("该用户不是群成员")
+	}
+	// 管理员不能移除群主或其他管理员（群主可移除任何人）
+	if opRole == 1 && targetRole <= 1 {
+		return apperr.Forbidden("管理员仅可移除普通成员")
+	}
+	g, err := s.store.GetGroupByGUID(gUID)
+	if err != nil {
+		return apperr.NotFound("群不存在")
+	}
+	if err := s.store.RemoveGroupMember(gUID, targetUID); err != nil {
+		return apperr.WrapInternal("移除群成员失败", err)
+	}
+	// 清理被移除者的群会话视图（会话列表不再展示该群）
+	_ = s.store.DeleteGroupConversationView(targetUID, gUID)
+	opName := s.Info(operatorUID)
+	if opName == "" {
+		opName = "用户" + itoa(operatorUID)
+	}
+	targetName := s.Info(targetUID)
+	if targetName == "" {
+		targetName = "用户" + itoa(targetUID)
+	}
+	// “xx 将 yy 移出了群聊”：落共享历史并推送给剩余全体成员（移除后 ListGroupMembers 已不含被移除者）
+	if s.groupSysMsgTo != nil {
+		b, jerr := json.Marshal(map[string]interface{}{
+			"kind":         "group_kick",
+			"operator_uid":  operatorUID,
+			"operator_name": opName,
+			"target_uid":    targetUID,
+			"target_name":   targetName,
+		})
+		extra := ""
+		if jerr == nil {
+			extra = string(b)
+		}
+		members, _ := s.store.ListGroupMembers(gUID)
+		if len(members) > 0 {
+			s.groupSysMsgTo(gUID, g.ConvID, opName+" 将 "+targetName+" 移出了群聊", extra, members)
+		}
+	}
+	// 通知被移除者：通知中心 + WS 事件（客户端据此清理会话与消息）
+	_ = s.store.CreateNotification(&mysql.Notification{
+		ID: s.genID(), UID: targetUID, Type: "kick", Title: "被移出群聊",
+		Summary: "你被 " + opName + " 移出了群「" + g.Name + "」",
+	})
+	if s.notify != nil {
+		s.notify(targetUID, "group.kicked", ginMap("g_uid", gUID, "conv_id", itoa(g.ConvID), "operator_name", opName))
+	}
+	return nil
+}
+
+// SetMemberRole 设为/取消管理员：仅群主可操作；目标必须是除群主外的群成员，role 仅允许 1/2。
+// 成功后向全体群成员推送 group.role_changed 事件，客户端据此刷新成员角色标签。
+func (s *Service) SetMemberRole(operatorUID, gUID, targetUID int64, role int8) error {
+	if role != 1 && role != 2 {
+		return apperr.BadRequest("角色值无效")
+	}
+	if operatorUID == targetUID {
+		return apperr.BadRequest("不能修改自己的角色")
+	}
+	opRole, err := s.store.GetGroupMemberRole(gUID, operatorUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if opRole != 0 {
+		return apperr.Forbidden("仅群主可设置管理员")
+	}
+	targetRole, err := s.store.GetGroupMemberRole(gUID, targetUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if targetRole < 0 {
+		return apperr.NotFound("该用户不是群成员")
+	}
+	if targetRole == 0 {
+		return apperr.BadRequest("不能修改群主角色")
+	}
+	if targetRole == role {
+		return nil // 幂等：角色未变化
+	}
+	if err := s.store.UpdateGroupMemberRole(gUID, targetUID, role); err != nil {
+		return apperr.WrapInternal("修改群成员角色失败", err)
+	}
+	if s.notify != nil {
+		members, _ := s.store.ListGroupMembers(gUID)
+		for _, m := range members {
+			s.notify(m, "group.role_changed", ginMap("g_uid", gUID, "uid", itoa(targetUID), "role", role))
+		}
+	}
+	return nil
+}
+
 // GetGroup 查询群信息：仅群成员可查（审计 P1：防任意用户枚举群信息与成员列表）。
 func (s *Service) GetGroup(uid, gUID int64) (*GroupDTO, error) {
 	if ok, err := s.store.IsGroupMember(gUID, uid); err != nil || !ok {
@@ -554,10 +833,101 @@ func (s *Service) GetGroup(uid, gUID int64) (*GroupDTO, error) {
 	}
 	members, _ := s.store.ListGroupMembers(gUID)
 	myRole, _ := s.store.GetGroupMemberRole(gUID, uid)
+	roles, _ := s.store.ListGroupMemberRoles(gUID)
+	nicks, _ := s.store.ListGroupMemberNicknames(gUID)
+	mutes, _ := s.store.ListGroupMemberMutes(gUID)
+	saved := int8(1)
+	if savedMap, err := s.store.ListGroupMemberSaved(uid, []int64{gUID}); err == nil {
+		if v, ok := savedMap[gUID]; ok {
+			saved = v
+		}
+	}
 	return &GroupDTO{
 		GUID: g.GUID, Name: g.Name, OwnerUID: g.OwnerUID,
-		Announcement: g.Announcement, MemberCount: len(members), Avatar: g.Avatar, Members: members, MyRole: myRole,
+		Announcement: g.Announcement, MemberCount: len(members), Avatar: g.Avatar, Members: members,
+		MemberRoles: roles, MemberNicknames: nicks, MemberMutes: mutes, MyNickname: nicks[uid], MyRole: myRole,
+		InviteConfirm: g.InviteConfirm, MuteAll: g.MuteAll, MyMutedUntil: mutes[uid], Saved: saved,
 	}, nil
+}
+
+// TransferOwnership 转让群主（微信规则）：仅现任群主可操作，目标必须是除自己外的群成员；
+// 转让后原群主自动变普通成员；全体群成员推送 group.owner_changed 事件 + 共享历史落系统消息。
+func (s *Service) TransferOwnership(ownerUID, gUID, newOwnerUID int64) error {
+	if ownerUID == newOwnerUID {
+		return apperr.BadRequest("不能转让给自己")
+	}
+	opRole, err := s.store.GetGroupMemberRole(gUID, ownerUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if opRole != 0 {
+		return apperr.Forbidden("仅群主可转让群主")
+	}
+	g, err := s.store.GetGroupByGUID(gUID)
+	if err != nil {
+		return apperr.NotFound("群不存在")
+	}
+	if g.OwnerUID != ownerUID {
+		return apperr.Forbidden("仅现任群主可转让群主")
+	}
+	newRole, err := s.store.GetGroupMemberRole(gUID, newOwnerUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if newRole < 0 {
+		return apperr.NotFound("目标不是群成员")
+	}
+	if err := s.store.TransferGroupOwner(gUID, ownerUID, newOwnerUID); err != nil {
+		return apperr.WrapInternal("转让群主失败", err)
+	}
+	newName := s.Info(newOwnerUID)
+	if newName == "" {
+		newName = "用户" + itoa(newOwnerUID)
+	}
+	// “xx 成为新群主”：落共享历史并推送全体成员
+	if s.groupSysMsg != nil {
+		b, jerr := json.Marshal(map[string]interface{}{
+			"kind":      "group_transfer",
+			"owner_uid":  newOwnerUID,
+			"owner_name": newName,
+		})
+		extra := ""
+		if jerr == nil {
+			extra = string(b)
+		}
+		members, _ := s.store.ListGroupMembers(gUID)
+		s.groupSysMsg(newOwnerUID, gUID, g.ConvID, newName+" 成为新群主", extra, members)
+	}
+	// 事件推送：客户端刷新 myRole/ownerUid（原群主权限即时收回）
+	if s.notify != nil {
+		members, _ := s.store.ListGroupMembers(gUID)
+		for _, m := range members {
+			s.notify(m, "group.owner_changed", ginMap("g_uid", gUID, "owner_uid", itoa(newOwnerUID)))
+		}
+	}
+	return nil
+}
+
+// SetMyNickname 设置我的群内昵称（任何成员均可；空字符串清除回落用户昵称，上限 32 字符）。
+// 成功后向全体群成员推送 group.nickname_changed，客户端刷新发送者展示名。
+func (s *Service) SetMyNickname(uid, gUID int64, nickname string) error {
+	if ok, err := s.store.IsGroupMember(gUID, uid); err != nil || !ok {
+		return apperr.Forbidden("你不是群成员")
+	}
+	nickname = strings.TrimSpace(nickname)
+	if len([]rune(nickname)) > 32 {
+		return apperr.BadRequest("群昵称过长（上限 32 字）")
+	}
+	if err := s.store.UpdateGroupMemberNickname(gUID, uid, nickname); err != nil {
+		return apperr.WrapInternal("设置群昵称失败", err)
+	}
+	if s.notify != nil {
+		members, _ := s.store.ListGroupMembers(gUID)
+		for _, m := range members {
+			s.notify(m, "group.nickname_changed", ginMap("g_uid", gUID, "uid", itoa(uid), "nickname", nickname))
+		}
+	}
+	return nil
 }
 
 // UpdateGroupInfo 修改群名/群公告：仅群主或管理员可操作（后端鉴权，防越权）。
@@ -584,6 +954,11 @@ func (s *Service) UpdateGroupInfo(uid, gUID int64, name, announcement string) er
 	if len([]rune(announcement)) > 500 {
 		return apperr.BadRequest("群公告过长")
 	}
+	// 变更前的公告（用于判定是否需要强提醒推送：仅公告实际变化时推 group.announcement）
+	oldAnnouncement := ""
+	if old, err := s.store.GetGroupByGUID(gUID); err == nil && old != nil {
+		oldAnnouncement = old.Announcement
+	}
 	if err := s.store.UpdateGroup(gUID, name, announcement); err != nil {
 		return apperr.WrapInternal("修改群资料失败", err)
 	}
@@ -592,6 +967,144 @@ func (s *Service) UpdateGroupInfo(uid, gUID int64, name, announcement string) er
 		for _, m := range members {
 			s.notify(m, "group.updated", ginMap("g_uid", gUID, "name", name, "announcement", announcement))
 		}
+		// 公告强提醒（G11）：公告实际变化时推专用事件，客户端打开该群会话时顶部横幅展示；
+		// 操作者自身不推（自己刚编辑完无需再提醒）
+		if announcement != oldAnnouncement {
+			for _, m := range members {
+				if m == uid {
+					continue
+				}
+				s.notify(m, "group.announcement", ginMap("g_uid", gUID, "announcement", announcement, "operator_uid", uid))
+			}
+		}
+	}
+	return nil
+}
+
+// UpdateGroupSettings 更新群设置开关（G7 入群确认 / G8 全员禁言）：仅群主或管理员可操作。
+// 全员禁言开启（0→1）时落系统消息"群主开启了全员禁言"并推送全体成员（发送守卫据此拦截普通成员）。
+func (s *Service) UpdateGroupSettings(uid, gUID int64, inviteConfirm, muteAll *int8) error {
+	role, err := s.store.GetGroupMemberRole(gUID, uid)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if role < 0 || role > 1 {
+		return apperr.Forbidden("仅群主或管理员可修改群设置")
+	}
+	if inviteConfirm == nil && muteAll == nil {
+		return apperr.BadRequest("没有要更新的设置项")
+	}
+	for _, v := range []*int8{inviteConfirm, muteAll} {
+		if v != nil && *v != 0 && *v != 1 {
+			return apperr.BadRequest("设置值无效")
+		}
+	}
+	g, err := s.store.GetGroupByGUID(gUID)
+	if err != nil {
+		return apperr.NotFound("群不存在")
+	}
+	if err := s.store.UpdateGroupSettings(gUID, inviteConfirm, muteAll); err != nil {
+		return apperr.WrapInternal("更新群设置失败", err)
+	}
+	// 全员禁言从 0→1：落系统消息并推送全体成员（禁言生效感知）；1→0 同样提示恢复
+	if muteAll != nil && g.MuteAll != *muteAll {
+		opName := s.Info(uid)
+		if opName == "" {
+			opName = "用户" + itoa(uid)
+		}
+		content := "群主开启了全员禁言"
+		if *muteAll == 0 {
+			content = "群主已解除全员禁言"
+		}
+		b, jerr := json.Marshal(map[string]interface{}{"kind": "group_mute_all", "operator_uid": uid, "operator_name": opName, "mute_all": *muteAll})
+		extra := ""
+		if jerr == nil {
+			extra = string(b)
+		}
+		if s.groupSysMsg != nil {
+			members, _ := s.store.ListGroupMembers(gUID)
+			s.groupSysMsg(uid, gUID, g.ConvID, content, extra, members)
+		}
+	}
+	// 群资料变更：推 group.updated（客户端刷新资料面板开关状态）
+	if s.notify != nil {
+		members, _ := s.store.ListGroupMembers(gUID)
+		for _, m := range members {
+			s.notify(m, "group.updated", ginMap("g_uid", gUID, "invite_confirm", inviteConfirm, "mute_all", muteAll))
+		}
+	}
+	return nil
+}
+
+// SetMemberMutedUntil 设置/解除成员禁言（G8）：仅群主或管理员可操作，不能禁言群主。
+// until 为 unix 毫秒；0 表示解除。成功推 group.muted 事件供客户端刷新成员标签。
+func (s *Service) SetMemberMutedUntil(operatorUID, gUID, targetUID, until int64) error {
+	if targetUID <= 0 {
+		return apperr.BadRequest("目标成员无效")
+	}
+	opRole, err := s.store.GetGroupMemberRole(gUID, operatorUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if opRole < 0 || opRole > 1 {
+		return apperr.Forbidden("仅群主或管理员可禁言成员")
+	}
+	targetRole, err := s.store.GetGroupMemberRole(gUID, targetUID)
+	if err != nil {
+		return apperr.WrapInternal("查询群角色失败", err)
+	}
+	if targetRole < 0 {
+		return apperr.NotFound("该用户不是群成员")
+	}
+	// 管理员不能禁言群主或其他管理员（对齐移除成员规则）
+	if opRole == 1 && targetRole <= 1 {
+		return apperr.Forbidden("管理员仅可禁言普通成员")
+	}
+	if err := s.store.UpdateMemberMutedUntil(gUID, targetUID, until); err != nil {
+		return apperr.WrapInternal("设置禁言失败", err)
+	}
+	if s.notify != nil {
+		members, _ := s.store.ListGroupMembers(gUID)
+		for _, m := range members {
+			s.notify(m, "group.muted", ginMap("g_uid", gUID, "uid", itoa(targetUID), "until", until))
+		}
+	}
+	return nil
+}
+
+// GroupMuteCheck 群禁言发送守卫（G8，由消息服务注入调用）：
+//   - 全员禁言：仅群主/管理员可发言，其余成员禁言；
+//   - 个人禁言：muted_until > now 时禁言（个人禁言不豁免管理员，微信规则）。
+// 返回 (muted, reason)。
+func (s *Service) GroupMuteCheck(gUID, uid int64) (bool, string) {
+	role, err := s.store.GetGroupMemberRole(gUID, uid)
+	if err != nil || role < 0 {
+		return true, "你不是群成员，无法发送消息"
+	}
+	muteAll, err := s.store.GetGroupMuteState(gUID)
+	if err == nil && muteAll == 1 && role > 1 {
+		return true, "群主开启了全员禁言，仅群主/管理员可发言"
+	}
+	mutes, err := s.store.ListGroupMemberMutes(gUID)
+	if err != nil {
+		return false, ""
+	}
+	if until := mutes[uid]; until > time.Now().UnixMilli() {
+		return true, "你已被禁言，暂时无法发言"
+	}
+	return false, ""
+}
+
+// UpdateGroupSaved 更新我"保存到通讯录"开关（G10）：任何群成员可操作自己的行。
+func (s *Service) UpdateGroupSaved(uid, gUID int64, saved int8) error {
+	if saved != 0 && saved != 1 {
+		return apperr.BadRequest("设置值无效")
+	}
+	if ok, err := s.store.IsGroupMember(gUID, uid); err != nil || !ok {
+		return apperr.Forbidden("你不是群成员")
+	}
+	if err := s.store.UpdateGroupMemberSaved(gUID, uid, saved); err != nil {
+		return apperr.WrapInternal("更新群设置失败", err)
 	}
 	return nil
 }
@@ -605,13 +1118,18 @@ func (s *Service) ListUserGroups(uid int64) ([]*GroupDTO, error) {
 	}
 	groups := s.store.GetGroupsByGUIDs(gUids)
 	counts := s.store.GroupMemberCounts(gUids)
+	savedMap, _ := s.store.ListGroupMemberSaved(uid, gUids)
 	list := make([]*GroupDTO, 0, len(gUids))
 	for _, gUID := range gUids {
 		g := groups[gUID]
 		if g == nil {
 			continue
 		}
-		list = append(list, &GroupDTO{GUID: g.GUID, Name: g.Name, OwnerUID: g.OwnerUID, Announcement: g.Announcement, MemberCount: counts[gUID], Avatar: g.Avatar})
+		saved := int8(1)
+		if v, ok := savedMap[gUID]; ok {
+			saved = v
+		}
+		list = append(list, &GroupDTO{GUID: g.GUID, Name: g.Name, OwnerUID: g.OwnerUID, Announcement: g.Announcement, MemberCount: counts[gUID], Avatar: g.Avatar, InviteConfirm: g.InviteConfirm, MuteAll: g.MuteAll, Saved: saved})
 	}
 	return list, nil
 }
@@ -619,6 +1137,38 @@ func (s *Service) ListUserGroups(uid int64) ([]*GroupDTO, error) {
 // GetGroupMembers 群成员 uid 列表（供群聊多路分发）。
 func (s *Service) GetGroupMembers(gUID int64) ([]int64, error) {
 	return s.store.ListGroupMembers(gUID)
+}
+
+// GetMemberRole 群成员角色查询（G2 @所有人鉴权 / G14 已读人数权限）：0 群主 / 1 管理员 / 2 成员 / -1 非成员。
+func (s *Service) GetMemberRole(gUID, uid int64) (int8, error) {
+	return s.store.GetGroupMemberRole(gUID, uid)
+}
+
+// NotifyMentioned 为被 @ 成员写通知中心条目（群消息落库后由消息服务回调）。
+// 摘要格式：「群名」发送者：内容摘要；action 携带 conv_id/msg_id/g_uid（字符串防精度丢失），
+// 供客户端后续点击定位原消息。写失败静默（通知为增强能力，不回滚发送）。
+func (s *Service) NotifyMentioned(gUID, convID, msgID, senderUID int64, senderName string, mentionedUIDs []int64, preview string) {
+	g, err := s.store.GetGroupByGUID(gUID)
+	if err != nil {
+		return
+	}
+	if senderName == "" {
+		senderName = "有人"
+	}
+	if r := []rune(preview); len(r) > 50 {
+		preview = string(r[:50]) + "…"
+	}
+	for _, uid := range mentionedUIDs {
+		if uid <= 0 || uid == senderUID {
+			continue
+		}
+		_ = s.store.CreateNotification(&mysql.Notification{
+			ID: s.genID(), UID: uid, Type: "mention",
+			Title: "有人@了你",
+			Summary: "「" + g.Name + "」" + senderName + "：" + preview,
+			Action:  `{"conv_id":"` + itoa(convID) + `","msg_id":"` + itoa(msgID) + `","g_uid":"` + itoa(gUID) + `"}`,
+		})
+	}
 }
 
 // ---- 通知 ----

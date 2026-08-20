@@ -99,3 +99,17 @@ func (a *Adapter) HandleAck(uid int64, body json.RawMessage) (*Frame, []int64, e
 	})
 	return ackFrame, []int64{msg.SenderUID}, nil
 }
+
+// HandleTyping 正在输入（S7）：解析 conv_id，仅单聊返回对端 uid（群聊不广播输入状态）。
+func (a *Adapter) HandleTyping(uid int64, body json.RawMessage) ([]int64, error) {
+	var req struct {
+		ConvID int64 `json:"conv_id,string"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.ConvID <= 0 {
+		return nil, nil
+	}
+	if peer := a.svc.GetConversationPeer(req.ConvID, uid); peer > 0 {
+		return []int64{peer}, nil
+	}
+	return nil, nil // 群聊或未知会话：不转发
+}

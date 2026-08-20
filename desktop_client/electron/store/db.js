@@ -77,7 +77,7 @@ function accountDbPath(uid) {
   return path.join(storageRoot(), 'accounts', String(uid), 'workchat.db')
 }
 
-const CURRENT_SCHEMA_VERSION = 3
+const CURRENT_SCHEMA_VERSION = 6
 
 let db = null // 当前会话的 DB 句柄
 let sessionUid = null // 当前会话账户 uid
@@ -348,6 +348,34 @@ function migrate(next) {
   if (version < 3) {
     // v3：语音已播放标记（未读红点持久化从 localStorage 迁入消息表，随消息同库同生命周期）
     next.exec('ALTER TABLE messages ADD COLUMN voice_played INTEGER NOT NULL DEFAULT 0')
+    next
+      .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run('schema_version', '3')
+    version = 3
+  }
+
+  if (version < 4) {
+    // v4：会话草稿（切换会话不丢输入内容，列表红色 [草稿] 前缀；纯本地，不同步服务端）
+    next.exec('ALTER TABLE conversations ADD COLUMN draft TEXT')
+    next
+      .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run('schema_version', '4')
+    version = 4
+  }
+
+  if (version < 5) {
+    // v5：会话最后消息发送者（群聊列表拼 "发送者: 内容" 前缀；0/空表示系统/无）
+    next.exec('ALTER TABLE conversations ADD COLUMN last_sender_uid TEXT')
+    next.exec('ALTER TABLE conversations ADD COLUMN last_sender_name TEXT')
+    next
+      .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+      .run('schema_version', '5')
+    version = 5
+  }
+
+  if (version < 6) {
+    // v6：标记未读（右键手动挂起红点，纯本地状态；收到新消息/打开会话自动清除）
+    next.exec('ALTER TABLE conversations ADD COLUMN marked_unread INTEGER NOT NULL DEFAULT 0')
     next
       .prepare('INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
       .run('schema_version', String(CURRENT_SCHEMA_VERSION))
