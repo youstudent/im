@@ -541,14 +541,14 @@ onMounted(async () => {
 // 关于：当前版本实时取 app.getVersion()（Electron），浏览器兜底 1.0.0
 const appVersion = ref('1.0.0')
 
-// 检查更新：manual=true 为用户手动点击（无新版时给提示）；false 为静默检查
+// 检查更新：manual=true 为用户手动点击（无新版时给提示，且无视 TTL 强制请求）；false 为静默检查（24h TTL 内复用缓存）
 const checkingUpdate = ref(false)
 const updateInfo = ref(null) // 新版本信息：{ version, download_url, release_notes }
 async function checkUpdate(manual = true) {
   if (checkingUpdate.value) return
   checkingUpdate.value = true
   try {
-    const r = await checkLatestVersion(appVersion.value)
+    const r = await checkLatestVersion(appVersion.value, { force: manual })
     if (r.hasNew && r.latest) {
       updateInfo.value = r.latest
     } else if (manual) {

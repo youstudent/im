@@ -9,6 +9,7 @@ import SingleProfilePanel from './SingleProfilePanel.vue'
 import GroupProfilePanel from './GroupProfilePanel.vue'
 import InviteMembersModal from './InviteMembersModal.vue'
 import LeaveGroupConfirm from './LeaveGroupConfirm.vue'
+import DeleteConversationConfirm from './DeleteConversationConfirm.vue'
 import GroupSettingsModal from './GroupSettingsModal.vue'
 import ForwardPickerModal from './ForwardPickerModal.vue'
 import { messageApi } from '../api/message'
@@ -342,7 +343,7 @@ const currentRemark = computed(() => (currentFriendInfo.value && currentFriendIn
 const remarkSaving = ref(false)
 
 // 保存好友备注：成功后同步更新缓存与会话项展示名（备注优先，清空则回落昵称）；
-// 返回是否成功（子面板据此决定是否退出编辑态）
+// 成功返回 true（子面板据此退出编辑态隐藏按钮）；失败返回 false 并 toast 提示（替代原生 alert）
 async function saveRemark(draft) {
   const targetUid = currentContact.value.targetId
   if (!targetUid || remarkSaving.value) return false
@@ -371,9 +372,10 @@ async function saveRemark(draft) {
         }
       })
     }
+    showToast(remark ? '备注已保存' : '备注已清除', 'success')
     return true
   } catch (e) {
-    alert(e.message || '备注保存失败')
+    showToast(e.message || '备注保存失败', 'error')
     return false
   } finally {
     remarkSaving.value = false
@@ -1432,72 +1434,6 @@ function isMentionMe(mapped) {
   })
 }
 
-// ---- S6 表情回应 ----
-// 原始 reactions（[{uid, emoji, time}]）→ 聚合展示 [{emoji, count, mine}]
-function aggregateReactions(msg) {
-  const list = Array.isArray(msg.reactions) ? msg.reactions : []
-  if (!list.length) return []
-  const me = String(meUid())
-  const map = new Map()
-  for (const r of list) {
-    const key = String(r.emoji || '')
-    if (!key) continue
-    const e = map.get(key) || { emoji: key, count: 0, mine: false }
-    e.count++
-    if (String(r.uid) === me) e.mine = true
-    map.set(key, e)
-  }
-  return [...map.values()]
-}
-
-// 添加/取消表情回应：本地乐观更新 + WS 优先发送（失败 HTTP 兜底）
-async function onReact(msg, { emoji, add }) {
-  if (!msg || msg.status === 1) return
-  const me = String(meUid())
-  const convId = realConvMap.value[activeId.value] || currentContact.value.convId || 0
-  if (!convId || !msg.id) return
-  // 本地乐观更新（幂等：同一 emoji 重复添加不重复计数）
-  msg.reactions = msg.reactions || []
-  if (add) {
-    if (!msg.reactions.some((r) => String(r.uid) === me && r.emoji === emoji)) {
-      msg.reactions.push({ uid: me, emoji, time: Math.floor(Date.now() / 1000) })
-    }
-  } else {
-    msg.reactions = msg.reactions.filter((r) => !(String(r.uid) === me && r.emoji === emoji))
-  }
-  // 服务端同步：WS 优先，未发出（断线）时 HTTP 兜底
-  const sent = wsClient.sendReaction(convId, msg.id, emoji, add)
-  if (!sent) {
-    try {
-      await messageApi.setReaction(convId, msg.id, emoji, add)
-    } catch (e) {
-      showToast(e.message || '表情回应失败', 'error')
-    }
-  }
-}
-
-// 收到 reaction 帧（其他成员添加/移除）：按 conv_id+msg_id 找到消息就地更新
-function onWsReaction(data) {
-  if (!data || data.msg_id == null || data.conv_id == null) return
-  const convIdStr = String(data.conv_id)
-  const msgIdStr = String(data.msg_id)
-  const uidStr = String(data.uid)
-  const emoji = String(data.emoji || '')
-  if (!emoji) return
-  const conv = conversations.value.find((c) => String(c.convId || realConvMap.value[c.id] || '') === convIdStr)
-  if (!conv || !Array.isArray(conv.messages)) return
-  const msg = conv.messages.find((m) => String(m.id) === msgIdStr || String(m.serverId || '') === msgIdStr)
-  if (!msg) return
-  msg.reactions = msg.reactions || []
-  if (data.add) {
-    if (!msg.reactions.some((r) => String(r.uid) === uidStr && r.emoji === emoji)) {
-      msg.reactions.push({ uid: uidStr, emoji, time: Math.floor(Date.now() / 1000) })
-    }
-  } else {
-    msg.reactions = msg.reactions.filter((r) => !(String(r.uid) === uidStr && r.emoji === emoji))
-  }
-}
-
 // ---- S7 正在输入（仅单聊） ----
 const typingPeer = reactive({ convId: '', at: 0 })
 let typingClearTimer = null
@@ -1524,36 +1460,6 @@ const typingVisible = computed(() => {
   const convId = realConvMap.value[activeId.value] || currentContact.value.convId || ''
   return String(convId) === typingPeer.convId && Date.now() - typingPeer.at < 3000
 })
-
-// ---- G14 群已读人数（仅群主/管理员视角，企业微信策略） ----
-const isGroupAdminNow = computed(() => isGroupChat.value && (gp.groupInfo.myRole ?? 2) <= 1)
-// 对给定消息列表批量查询已读人数（最近 50 条非乐观消息，并发查询）
-async function refreshReadCounts(convId, msgs) {
-  if (!convId || !isGroupAdminNow.value) return
-  const list = (Array.isArray(msgs) ? msgs : [])
-    .filter((m) => m.id && !String(m.id).startsWith('tmp-') && m.status !== 1)
-    .slice(-50)
-  if (!list.length) return
-  const results = await Promise.allSettled(
-    list.map((m) => messageApi.readCount(convId, m.id).then((r) => ({ id: String(m.id), count: Number(r && r.count) || 0 })))
-  )
-  results.forEach((res, i) => {
-    if (res.status === 'fulfilled') list[i].readCount = res.value.count
-  })
-}
-// 当前会话消息变化时（打开会话/收到新消息）节流触发已读人数查询
-let readCountTimer = null
-watch(
-  () => (currentContact.value && currentContact.value.messages || []).length,
-  () => {
-    if (!isGroupAdminNow.value) return
-    if (readCountTimer) clearTimeout(readCountTimer)
-    readCountTimer = setTimeout(() => {
-      const convId = realConvMap.value[activeId.value] || currentContact.value.convId || 0
-      refreshReadCounts(convId, currentContact.value.messages || [])
-    }, 600)
-  }
-)
 
 // ---- 多选模式（微信风格：右键多选 → 勾选消息 → 逐条转发 / 合并转发 / 删除） ----
 const multiSel = reactive({ on: false, ids: [] })
@@ -1886,8 +1792,26 @@ function onMessagesScroll() {
 async function onWsMessage(msg) {
   // 退群系统消息仅群主可见：非群主直接忽略（不渲染不落库）
   if (isHiddenLeaveMsg(msg, meUid())) return
-  const convEntry = Object.entries(realConvMap.value).find(([, convId]) => String(convId) === String(msg.conv_id))
-  if (!convEntry) return
+  let convEntry = Object.entries(realConvMap.value).find(([, convId]) => String(convId) === String(msg.conv_id))
+  // 删除会话后对方来消息：服务端已重建会话视图，推送帧携带 conv_type/target_id，此处补建本地会话项（复用 insertConvFromEvent）
+  if (!convEntry) {
+    // 系统消息（sender_uid=0）不触发重建：会话由 conversation.created 事件创建，
+    // 且系统消息 dto 不带 conv_type/target_id，误重建会把 uid=0 当对端生成"用户 0"错误会话
+    if (msg.sender_uid === 0) return
+    const convType = Number(msg.conv_type) || 1
+    const isSenderMe = msg.sender_uid === meUid()
+    // 服务端 target_id 语义为"发送目标"：单聊时对方发来 → 对端即 sender_uid；自己（其他设备）发来 → 对端为 target_id。
+    // 群聊 target_id 即 g_uid，与发送者无关。
+    const peerId = convType === 2 ? msg.target_id : (isSenderMe ? msg.target_id : msg.sender_uid)
+    await insertConvFromEvent({
+      conv_id: msg.conv_id,
+      type: convType,
+      target_id: peerId,
+      g_uid: convType === 2 ? msg.target_id : undefined,
+    })
+    convEntry = Object.entries(realConvMap.value).find(([, convId]) => String(convId) === String(msg.conv_id))
+    if (!convEntry) return
+  }
   const cid = convEntry[0]
   const contact = conversations.value.find((x) => x.id === cid)
   if (!contact) return
@@ -2203,6 +2127,38 @@ async function insertConvFromEvent(data) {
   if (conversations.value.some((c) => c.id === id)) return
   const isGroupConv = Number(data.type) === 2 || data.g_uid != null
   const targetId = isGroupConv ? data.g_uid : data.target_id
+  // 防御：target 无效（null/'0'/''）不创建——防止被错误帧（如缺 conv_type 的系统消息）生成"用户 0"会话
+  if (targetId == null || String(targetId) === '0' || String(targetId) === '') return
+  // 同 target 已有会话项但 conv_id 不同（历史 conv_id 分叉脏数据）：
+  // 把已有项切换到权威 conv_id，不再新建项，避免列表出现两个相同群会话
+  const dupIdx = conversations.value.findIndex(
+    (c) =>
+      !String(c.id).startsWith('new-') && c.convId && String(c.convId) !== convId &&
+      String(c.targetId) === String(targetId) && (isGroupConv ? c.type === 'group' : c.type !== 'group')
+  )
+  if (dupIdx >= 0) {
+    const old = conversations.value[dupIdx]
+    const oldConvId = String(old.convId)
+    const oldId = old.id
+    old.id = id
+    old.convId = convId
+    delete realConvMap.value[oldId]
+    realConvMap.value[id] = convId
+    if (activeId.value === oldId) activeId.value = id
+    // 不落盘状态随迁
+    if (noPersistSet.value.delete(oldConvId)) {
+      noPersistSet.value.add(convId)
+      localdb.conversations.setNoPersist(convId, true)
+    }
+    // 分叉本地行与消息丢弃（权威数据在服务端统一 conv_id 下，打开会话时重拉）
+    localdb.messages.removeByConv(oldConvId)
+    localdb.conversations.remove(oldConvId)
+    // 合并后的会话行落库（复用已有项的摘要/未读，下次启动秒开不重复）
+    localdb.conversations.upsert([
+      { id: convId, type: isGroupConv ? 2 : 1, target_id: String(targetId), last_msg: old.lastMessage || '', last_msg_time: Number(old.lastMsgTime) || 0, unread: Number(old.unread) || 0, peer_read_seq: 0, last_synced_seq: Number(old.syncSeq) || 0 },
+    ])
+    return
+  }
   // 替换同 target 的占位会话（通讯录跳转时无会话创建）
   const phIdx = conversations.value.findIndex((c) => String(c.id).startsWith('new-') && String(c.targetId) === String(targetId))
   if (phIdx >= 0) conversations.value.splice(phIdx, 1)
@@ -2211,10 +2167,29 @@ async function insertConvFromEvent(data) {
   if (!info) {
     // 新会话的 target 不在缓存中：好友/群缓存必然过期（如对方刚通过好友请求、
     // 自己刚接受请求但 clearCache 晚于本事件到达），强制刷新一次再查，避免头像兜底 '?'。
-    contactMap = await buildContactMap(true)
-    info = contactMap.get(String(targetId))
+    // 群聊：直接查群详情（不依赖缓存），被邀请人拉取含新群的群信息；失败降级继续
+    if (isGroupConv) {
+      try {
+        const g = await groupApi.get(targetId)
+        if (g && g.name) {
+          info = { name: g.name, avatar: g.name[0], color: '#64748b', type: 'group' }
+          contactMap.set(String(targetId), info)
+        }
+      } catch {}
+      if (!info) {
+        contactMap = await buildContactMap(true)
+        info = contactMap.get(String(targetId))
+      }
+    } else {
+      contactMap = await buildContactMap(true)
+      info = contactMap.get(String(targetId))
+    }
   }
   info = info || {}
+  // 事件可能携带系统消息预览与时间（建群/邀请场景：conversation.created 先于 msg.push 到达），
+  // 会话项创建即带正确排序与最后消息，避免空壳会话排最底、无预览
+  const lastMsgTime = Number(data.last_msg_time) || 0
+  const lastMsg = data.last_msg != null ? String(data.last_msg) : ''
   conversations.value.push({
     id,
     name: info.name || data.target_name || (isGroupConv ? `群 ${targetId}` : `用户 ${targetId}`),
@@ -2222,12 +2197,12 @@ async function insertConvFromEvent(data) {
     color: info.color || '#64748b',
     online: false,
     type: isGroupConv ? 'group' : info.type || null,
-    lastMessage: '',
+    lastMessage: lastMsg,
     lastSenderUid: 0,
     lastSenderName: '',
     lastMentionMe: false,
-    time: '',
-    lastMsgTime: 0,
+    time: lastMsgTime ? formatConvTime(lastMsgTime) : '',
+    lastMsgTime,
     unread: 0,
     targetId,
     convId,
@@ -2238,10 +2213,12 @@ async function insertConvFromEvent(data) {
     _hasMore: false,
   })
   realConvMap.value[id] = convId
-  // 落本地库：下次启动从本地秒开
+  // 落本地库：下次启动从本地秒开（带系统消息预览与时间）
   localdb.conversations.upsert([
-    { id: convId, type: isGroupConv ? 2 : 1, target_id: String(targetId), last_msg: '', last_msg_time: 0, unread: 0, peer_read_seq: 0, last_synced_seq: 0 },
+    { id: convId, type: isGroupConv ? 2 : 1, target_id: String(targetId), last_msg: lastMsg, last_msg_time: lastMsgTime, unread: 0, peer_read_seq: 0, last_synced_seq: 0 },
   ])
+  // 新会话带最后消息时间时立即按序插入（置顶优先 → 时间倒序），不带则保持插入位置
+  if (lastMsgTime > 0) reorderConversations()
 }
 
 // 处理 WS social 帧（好友/群/会话事件）
@@ -2377,6 +2354,18 @@ function onWsSocial(body) {
     }
     return
   }
+  if (body.event === 'group.member_left') {
+    // 成员退群：失效该群资料缓存使成员列表/成员数刷新（当前群则重载）
+    const d = body.data || {}
+    if (d.g_uid == null) return
+    gp.groupMembersCache.delete(Number(d.g_uid))
+    gp.groupMembersCache.delete(d.g_uid)
+    const cur = currentContact.value
+    if (cur && cur.type === 'group' && String(cur.targetId) === String(d.g_uid)) {
+      gp.loadLiveGroupMembers()
+    }
+    return
+  }
   // group.invite 等：会话项由 conversation.created 事件插入，无需全量重载
 }
 
@@ -2458,9 +2447,32 @@ async function loadRealData() {
   )
   if (localConvs.length) {
     useRealBackend.value = true
-    // 本地秒开：过滤 target_id 缺失的损坏行（历史 bug 遗留，表现为“用户 null”且无法发送），
+    // 清理历史遗留的 target_id 无效行（"用户 0/null"：早前系统消息误建会话的残留），避免反复展示
+    for (const c of localConvs) {
+      if (c.id && (c.target_id == null || String(c.target_id) === '0' || String(c.target_id) === '')) {
+        localdb.conversations.remove(String(c.id))
+      }
+    }
+    // 清理分叉脏数据：同一 target 存在两条会话行（历史 conv_id 分叉，表现为重复群会话）时，
+    // 保留最后消息较新的一条，另一条连同消息一并删除，避免秒开列表出现两个相同会话
+    const seenByTarget = new Map()
+    for (const c of localConvs) {
+      if (!c.id || c.target_id == null || String(c.target_id) === '0') continue
+      const key = `${c.type}-${c.target_id}`
+      const prev = seenByTarget.get(key)
+      if (!prev) {
+        seenByTarget.set(key, c)
+        continue
+      }
+      const drop = (Number(c.last_msg_time) || 0) >= (Number(prev.last_msg_time) || 0) ? prev : c
+      seenByTarget.set(key, drop === prev ? c : prev)
+      localdb.conversations.remove(String(drop.id))
+      localdb.messages.removeByConv(String(drop.id))
+    }
+    const keptLocalIds = new Set([...seenByTarget.values()].map((c) => String(c.id)))
+    // 本地秒开：过滤 target_id 缺失的损坏行（历史 bug 遗留，表现为"用户 null"且无法发送），
     // 网络刷新后以服务端数据重建；离线时这类行本身也无法使用
-    applyConvList(localConvs.filter((c) => c.target_id != null).map((c) => toConvItem(c, contactMap)))
+    applyConvList(localConvs.filter((c) => c.target_id != null && String(c.target_id) !== '0' && keptLocalIds.has(String(c.id))).map((c) => toConvItem(c, contactMap)))
   }
 
   let convs
@@ -2507,16 +2519,51 @@ async function loadRealData() {
     // 差量合并：未变化会话保留现有项（含本地维护的未读/水位），同 target 占位会话被真实会话替换
     const incomingIds = new Set(incoming.map((c) => c.id))
     const incomingTargets = new Set(incoming.map((c) => String(c.targetId)))
+    // 同 target 但 conv_id 不同的本地项是历史 conv_id 分叉脏数据（表现为重复群会话）：
+    // 服务端每个 target 至多一条权威会话行，权威行已在 incoming 中，分叉项连同本地存储一并丢弃
+    for (const c of conversations.value) {
+      if (incomingIds.has(c.id) || String(c.id).startsWith('new-') || !c.convId) continue
+      if (!incomingTargets.has(String(c.targetId))) continue
+      const oldConvId = String(c.convId)
+      delete realConvMap.value[c.id]
+      noPersistSet.value.delete(oldConvId)
+      localdb.messages.removeByConv(oldConvId)
+      localdb.conversations.remove(oldConvId)
+    }
     const kept = conversations.value.filter(
-      (c) => !incomingIds.has(c.id) && !(String(c.id).startsWith('new-') && incomingTargets.has(String(c.targetId)))
+      (c) =>
+        !incomingIds.has(c.id) &&
+        !(String(c.id).startsWith('new-') && incomingTargets.has(String(c.targetId))) &&
+        !(c.convId && incomingTargets.has(String(c.targetId)))
     )
     list = incoming.concat(kept)
   }
   applyConvList(list)
+  // 群会话名补查：联系人缓存不含新群时会话名回退"群 {g_uid}"，异步查群详情补名（与 repairUnknownAvatars 同模式）
+  repairGroupConvNames()
   // 仅加载已有选中会话的消息
   if (activeId.value && conversations.value.some((x) => x.id === activeId.value)) {
     await reloadActiveConvMessages()
   }
+}
+
+// 修复群会话显示名：会话项名为"群 {g_uid}"回退形式（联系人缓存未含新群）时，异步查群详情补名
+async function repairGroupConvNames() {
+  const targets = conversations.value
+    .filter((c) => c.type === 'group' && /^群 \d+$/.test(String(c.name || '')))
+    .map((c) => String(c.targetId))
+  if (!targets.length) return
+  const results = await Promise.allSettled(targets.map((gUid) => groupApi.get(gUid)))
+  results.forEach((res, i) => {
+    if (res.status !== 'fulfilled' || !res.value || !res.value.name) return
+    const gUid = targets[i]
+    conversations.value.forEach((c) => {
+      if (c.type === 'group' && String(c.targetId) === gUid) {
+        c.name = res.value.name
+        c.avatar = res.value.name[0]
+      }
+    })
+  })
 }
 
 // 重新加载当前选中会话的消息（秒开/网络刷新后）
@@ -2650,7 +2697,6 @@ onMounted(() => {
     wsClient.on('read', onWsRead)
     wsClient.on('social', onWsSocial)
     wsClient.on('status', onWsStatus)
-    wsClient.on('reaction', onWsReaction) // S6 表情回应
     wsClient.on('typing', onWsTyping) // S7 对方正在输入
     wsStatus.value = wsClient.getStatus()
     wsClient.connect()
@@ -3021,10 +3067,6 @@ onBeforeUnmount(() => {
                         side="in"
                         :voice="voicePlayer"
                         :resolve-name="quoteDisplayName"
-                        :reactions="aggregateReactions(meta.msg)"
-                        :can-react="!meta.msg.isPending"
-                        :show-read-count="isGroupAdminNow"
-                        :read-count="meta.msg.readCount || 0"
                         @menu="onBubbleMenu"
                         @image-loaded="media.onImageLoaded"
                         @open-image="media.openImage"
@@ -3033,7 +3075,6 @@ onBeforeUnmount(() => {
                         @video-error="media.onBubbleVideoError"
                         @quote-jump="onQuoteJump"
                         @open-merge="onOpenMerge"
-                        @react="onReact(meta.msg, $event)"
                       />
                     </div>
                   </template>
@@ -3044,10 +3085,6 @@ onBeforeUnmount(() => {
                         side="out"
                         :voice="voicePlayer"
                         :resolve-name="quoteDisplayName"
-                        :reactions="aggregateReactions(meta.msg)"
-                        :can-react="!meta.msg.isPending"
-                        :show-read-count="isGroupAdminNow"
-                        :read-count="meta.msg.readCount || 0"
                         @menu="onBubbleMenu"
                         @image-loaded="media.onImageLoaded"
                         @open-image="media.openImage"
@@ -3056,7 +3093,6 @@ onBeforeUnmount(() => {
                         @video-error="media.onBubbleVideoError"
                         @quote-jump="onQuoteJump"
                         @open-merge="onOpenMerge"
-                        @react="onReact(meta.msg, $event)"
                       />
                       <div class="send-status">
                         <svg viewBox="0 0 14 14" width="14" height="14">
@@ -3377,10 +3413,10 @@ onBeforeUnmount(() => {
             :remark-saving="remarkSaving"
             v-model:mute-dnd="muteDnd"
             :is-no-persist="isNoPersist"
+            :on-save-remark="saveRemark"
             @send-message="sendMessageAction"
             @open-search="openSearchHistory"
             @toggle-no-persist="toggleNoPersist"
-            @save-remark="saveRemark"
             @start-voice-call="call.startVoiceCall()"
           />
           <GroupProfilePanel
@@ -3412,6 +3448,15 @@ onBeforeUnmount(() => {
       :leaving="gp.leavingGroup"
       @confirm="gp.confirmLeaveGroup()"
       @cancel="gp.showLeaveConfirm = false"
+    />
+
+    <!-- 删除会话二次确认弹窗（替代原生 confirm） -->
+    <DeleteConversationConfirm
+      v-if="convMenuApi.showDeleteConfirm"
+      :conv-name="convMenuApi.pendingDelete?.name || ''"
+      :deleting="convMenuApi.deleting"
+      @confirm="convMenuApi.confirmDelete()"
+      @cancel="convMenuApi.cancelDelete()"
     />
 
     <!-- 群设置弹窗：群名/群公告（管理员可编辑，普通成员只读） -->

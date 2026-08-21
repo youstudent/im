@@ -12,10 +12,13 @@ const props = defineProps({
   remarkSaving: { type: Boolean, default: false },
   muteDnd: { type: Boolean, default: false },
   isNoPersist: { type: Boolean, default: false },
+  // 保存备注函数 prop（父组件实现，返回 Promise<boolean>）：
+  // 相比 emit 返回值更可靠，成功时退出编辑态隐藏保存/取消按钮
+  onSaveRemark: { type: Function, default: null },
 })
 
 const emit = defineEmits([
-  'update:muteDnd', 'send-message', 'open-search', 'toggle-no-persist', 'save-remark', 'start-voice-call',
+  'update:muteDnd', 'send-message', 'open-search', 'toggle-no-persist', 'start-voice-call',
 ])
 
 // 备注编辑为面板局部状态：切换会话时由父组件 :key 重挂载自动复位
@@ -32,8 +35,9 @@ function cancelEditRemark() {
 }
 
 async function saveRemark() {
-  // 保存结果由父组件返回（true 成功）；失败时保留编辑态与草稿（emit 同步返回监听器返回值）
-  const [ok] = emit('save-remark', remarkDraft.value)
+  if (!props.onSaveRemark) return
+  // 等待父组件保存结果：成功 → 退出编辑态（保存/取消按钮隐藏）；失败 → 保留编辑态与草稿（父组件已 toast 提示）
+  const ok = await props.onSaveRemark(remarkDraft.value)
   if (ok) editingRemark.value = false
 }
 </script>

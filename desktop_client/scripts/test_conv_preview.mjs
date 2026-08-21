@@ -27,20 +27,23 @@ let convs = await get('/api/v1/conversations', a.access_token)
 let conv = convs.find((c) => String(c.target_id) === String(bUID))
 console.log('① 文本消息 last_msg =', JSON.stringify(conv.last_msg), '（期望: 普通文本消息）')
 
+// 媒体消息的 extra.url 需通过服务端域名白名单校验（审计 H4），用配置的 OSS bucket 域名构造测试 URL
+const OSS_HOST = 'https://jianchejiaimg.oss-cn-beijing.aliyuncs.com'
+
 // 2) A 发一条图片消息（content 为图片 URL）
-await post('/api/v1/conversations', { conv_id: '0', target_id: bUID, conv_type: 1, type: 2, msg_id: String(Date.now() + 2), content: 'http://oss.aliyun.com/bucket/image1.jpg', extra: '{"url":"http://oss.aliyun.com/bucket/image1.jpg"}' }, a.access_token)
+await post('/api/v1/conversations', { conv_id: '0', target_id: bUID, conv_type: 1, type: 2, msg_id: String(Date.now() + 2), content: OSS_HOST + '/bucket/image1.jpg', extra: '{"url":"' + OSS_HOST + '/bucket/image1.jpg"}' }, a.access_token)
 convs = await get('/api/v1/conversations', a.access_token)
 conv = convs.find((c) => String(c.target_id) === String(bUID))
 console.log('② 图片消息 last_msg =', JSON.stringify(conv.last_msg), '（期望: [图片]）')
 
 // 3) A 发一条文件消息
-await post('/api/v1/conversations', { conv_id: '0', target_id: bUID, conv_type: 1, type: 3, msg_id: String(Date.now() + 3), content: 'http://oss.aliyun.com/bucket/report.pdf', extra: '{"name":"report.pdf","url":"http://oss.aliyun.com/bucket/report.pdf"}' }, a.access_token)
+await post('/api/v1/conversations', { conv_id: '0', target_id: bUID, conv_type: 1, type: 3, msg_id: String(Date.now() + 3), content: OSS_HOST + '/bucket/report.pdf', extra: '{"name":"report.pdf","url":"' + OSS_HOST + '/bucket/report.pdf"}' }, a.access_token)
 convs = await get('/api/v1/conversations', a.access_token)
 conv = convs.find((c) => String(c.target_id) === String(bUID))
 console.log('③ 文件消息 last_msg =', JSON.stringify(conv.last_msg), '（期望: [文件]）')
 
 // 4) A 发一条视频消息
-await post('/api/v1/conversations', { conv_id: '0', target_id: bUID, conv_type: 1, type: 5, msg_id: String(Date.now() + 4), content: 'http://oss.aliyun.com/bucket/video.mp4', extra: '{"url":"http://oss.aliyun.com/bucket/video.mp4"}' }, a.access_token)
+await post('/api/v1/conversations', { conv_id: '0', target_id: bUID, conv_type: 1, type: 5, msg_id: String(Date.now() + 4), content: OSS_HOST + '/bucket/video.mp4', extra: '{"url":"' + OSS_HOST + '/bucket/video.mp4"}' }, a.access_token)
 convs = await get('/api/v1/conversations', a.access_token)
 conv = convs.find((c) => String(c.target_id) === String(bUID))
 console.log('④ 视频消息 last_msg =', JSON.stringify(conv.last_msg), '（期望: [视频]）')

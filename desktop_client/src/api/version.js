@@ -36,15 +36,54 @@ export function isNewerVersion(latest, current) {
   return false
 }
 
+// ---- 检查结果 TTL 缓存（P0 减压）：自动检查 24h 内复用上次结果，不请求服务端 ----
+// 版本信息全局共享（与账户无关），用无账户前缀键；手动检查 force=true 不受 TTL 限制。
+const UPDATE_CACHE_KEY = 'workchat:update:cache'
+const UPDATE_TTL_MS = 24 * 60 * 60 * 1000
+
+// 读取未过期的缓存：{ ts, latest }（latest 为服务端版本对象或 null=当时无版本记录）
+function readUpdateCache() {
+  try {
+    const raw = localStorage.getItem(UPDATE_CACHE_KEY)
+    if (!raw) return null
+    const c = JSON.parse(raw)
+    if (!c || !Number(c.ts)) return null
+    if (Date.now() - Number(c.ts) > UPDATE_TTL_MS) return null
+    return c
+  } catch {
+    return null
+  }
+}
+function writeUpdateCache(latest) {
+  try {
+    localStorage.setItem(UPDATE_CACHE_KEY, JSON.stringify({ ts: Date.now(), latest: latest || null }))
+  } catch {}
+}
+
 /**
  * 统一检查更新入口：
  * 返回 { hasNew, latest, offline }；网络失败静默降级（offline=true），不打断用户。
+ * options.force：true 时无视 TTL 强制请求（设置页手动"检查更新"）；
+ * 默认 false：24h TTL 内直接复用上次结果（启动自动检查），新版本提示最多延迟一个 TTL。
+ * 网络失败不写缓存，下次启动照常重试。
  */
-export async function checkLatestVersion(currentVersion) {
+export async function checkLatestVersion(currentVersion, { force = false } = {}) {
+  if (!force) {
+    const c = readUpdateCache()
+    if (c) {
+      const latest = c.latest
+      if (!latest || !latest.version) return { hasNew: false, latest: null }
+      return { hasNew: isNewerVersion(latest.version, currentVersion), latest }
+    }
+  }
   try {
     const data = await versionApi.latest()
-    if (!data || !data.has || !data.version) return { hasNew: false, latest: null }
+    if (!data || !data.has || !data.version) {
+      writeUpdateCache(null)
+      return { hasNew: false, latest: null }
+    }
     const latest = data.version
+    writeUpdateCache(latest)
     return { hasNew: isNewerVersion(latest.version, currentVersion), latest }
   } catch {
     return { hasNew: false, latest: null, offline: true }

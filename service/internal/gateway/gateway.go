@@ -19,7 +19,6 @@ const (
 	FrameKick      FrameType = "kick"       // S→C 强制下线（账号被禁用/管理员踢出），客户端收到后停止重连并回登录页
 	FrameCall      FrameType = "call"       // C→S 语音通话信令（纯转发，不落库、不进离线队列）
 	FrameCallPush  FrameType = "call.push"  // S→C 语音通话信令转发
-	FrameReaction  FrameType = "reaction"   // S→C 表情回应变更（S6）：{conv_id, msg_id, uid, emoji, add}
 )
 
 // Frame 统一长连接消息帧（JSON）。

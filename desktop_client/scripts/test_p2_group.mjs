@@ -4,8 +4,6 @@
  *   G8 群禁言（全员禁言拦截普通成员、豁免群主）
  *   G2 @所有人（仅群主/管理员可用）
  *   G10 保存到通讯录（saved 开关与群列表回显）
- *   S6 表情回应（添加/查询/移除）
- *   G14 群已读人数（仅群主可查）
  * 前置：服务端已启动（:8080）且已应用 0014_group_p2.sql 迁移。
  * 运行：node scripts/test_p2_group.mjs
  */
@@ -75,7 +73,6 @@ ok(r.code !== 0 && String(r.message).includes('禁言'), 'G8 普通成员被全�
 // 群主 A 可发
 r = await post('/api/v1/conversations', { conv_id: '0', target_id: gUid, conv_type: 2, type: 1, msg_id: String(Date.now() + 2), content: '群主消息' }, a.access_token)
 ok(r.code === 0, 'G8 群主不受全员禁言影响')
-const msgA = r.data
 // 关闭禁言
 r = await put(`/api/v1/groups/${gUid}/settings`, { mute_all: 0 }, a.access_token)
 ok(r.code === 0, 'G8 解除全员禁言')
@@ -107,24 +104,5 @@ r = await put(`/api/v1/groups/${gUid}/saved`, { saved: 1 }, b.access_token)
 ok(r.code === 0, 'G10 B 重新开启保存到通讯录')
 groups = await get('/api/v1/groups', b.access_token)
 ok(groups.find((g) => Number(g.g_uid) === Number(gUid)).saved === 1, 'G10 群列表回显 saved=1')
-
-// ---- S6 表情回应 ----
-r = await post(`/api/v1/conversations/${msgA.conv_id}/messages/${msgA.id}/reactions`, { emoji: '👍', add: true }, b.access_token)
-ok(r.code === 0, 'S6 B 添加 👍 回应')
-let reacts = await get(`/api/v1/conversations/${msgA.conv_id}/messages/${msgA.id}/reactions`, a.access_token)
-ok(Array.isArray(reacts) && reacts.length === 1 && reacts[0].emoji === '👍', 'S6 查询到回应')
-r = await post(`/api/v1/conversations/${msgA.conv_id}/messages/${msgA.id}/reactions`, { emoji: '👍', add: false }, b.access_token)
-ok(r.code === 0, 'S6 B 移除回应')
-reacts = await get(`/api/v1/conversations/${msgA.conv_id}/messages/${msgA.id}/reactions`, a.access_token)
-ok(Array.isArray(reacts) && reacts.length === 0, 'S6 移除后为空')
-
-// ---- G14 群已读人数 ----
-// 群主 A 可查
-r = await get(`/api/v1/conversations/${msgA.conv_id}/messages/${msgA.id}/read_count`, a.access_token)
-ok(r && typeof r.count === 'number', 'G14 群主查询已读人数')
-// 普通成员 B 被拒（HTTP 层返回业务错误码）
-const resB = await fetch(BASE + `/api/v1/conversations/${msgA.conv_id}/messages/${msgA.id}/read_count`, { headers: { Authorization: 'Bearer ' + b.access_token } })
-const jB = await resB.json()
-ok(jB.code !== 0, 'G14 普通成员查询被拒')
 
 console.log('--- 冒烟完成（exitCode=' + process.exitCode + '）---')

@@ -56,6 +56,8 @@ async function save() {
       muteAll: gsMuteAll.value ? 1 : 0,
       saved: gsSaved.value ? 1 : 0,
     })
+    // 保存成功即关闭弹框（父组件 onGroupSettingsSaved 同步本地状态）
+    emit('close')
   } catch (e) {
     emit('failed', e.message || '群设置保存失败')
   } finally {

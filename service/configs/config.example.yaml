@@ -10,7 +10,8 @@ mysql:
   max_open_conns: 20
   max_idle_conns: 10
   conn_max_lifetime: 3600
-  migrate_dir: ../../migrations
+  # 迁移脚本目录：建议填绝对路径（相对路径依赖启动目录，易报“找不到迁移目录”）
+  migrate_dir: E:/your/path/service/migrations
 
 redis:
   addr: "127.0.0.1:6379"

@@ -224,16 +224,6 @@ return redis.call('INCR', KEYS[1])
 	msgSvc.SetGroupRoleCheck(func(gUID, uid int64) (int8, error) {
 		return socialSvc.GetMemberRole(gUID, uid)
 	})
-	// S6 表情回应推送：向接收方推送 reaction 帧（单聊对端 / 群聊其他成员）
-	msgSvc.SetReactionNotify(func(recipients []int64, data interface{}) {
-		if hub == nil || len(recipients) == 0 {
-			return
-		}
-		frame := &gateway.Frame{Ver: 1, Type: gateway.FrameReaction, Seq: 0, Body: data}
-		for _, uid := range recipients {
-			hub.Push(uid, frame)
-		}
-	})
 	// 注入系统消息推送能力：按 uid 推送 msg.push 帧（群创建系统消息等多接收方场景）
 	msgSvc.SetPushFunc(func(uid int64, msg *message.MessageDTO) {
 		if hub != nil {
@@ -246,11 +236,18 @@ return redis.call('INCR', KEYS[1])
 		if hub != nil {
 			// 通知所有群成员（含群主）：新会话已建立；conv_id 传字符串（雪花 ID 防 JS 精度丢失），
 			// 客户端据此增量插入会话项，无需全量重载会话列表
+			// 携带群名（target_name）与最后消息预览/时间：被邀请人的联系人缓存可能不含新群，
+			// 事件自带群名避免会话名回退为"群 {g_uid}"；last_msg_time 保证排序正确
+			gName := "群"
+			if g, gerr := mysqlDB.GetGroupByGUID(gUID); gerr == nil && g != nil && g.Name != "" {
+				gName = g.Name
+			}
 			all := append([]int64{ownerUID}, memberUIDs...)
+			nowUnix := time.Now().Unix()
 			for _, uid := range all {
 				hub.PublishLocal(uid, &gateway.Frame{Ver: 1, Type: "social", Seq: 0, Body: map[string]interface{}{
 					"event": "conversation.created",
-					"data":  map[string]interface{}{"conv_id": fmt.Sprintf("%d", convID), "g_uid": gUID, "type": 2},
+					"data":  map[string]interface{}{"conv_id": fmt.Sprintf("%d", convID), "g_uid": gUID, "type": 2, "target_name": gName, "last_msg": "[系统消息]", "last_msg_time": nowUnix},
 				}})
 			}
 		}

@@ -66,13 +66,3 @@ func (d *DB) UpsertReadSeq(uid, convID, seq int64) error {
 	_, err = d.Exec(`UPDATE conversations SET unread_count = 0 WHERE owner_uid = ? AND id = ?`, uid, convID)
 	return err
 }
-
-// CountRead 统计某会话中已读游标 >= seq 的成员数（G14 群已读人数展示）。
-func (d *DB) CountRead(convID, seq int64) (int, error) {
-	var n int
-	err := d.QueryRow(`SELECT COUNT(1) FROM message_reads WHERE conv_id = ? AND last_read_seq >= ?`, convID, seq).Scan(&n)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
-}

@@ -1,9 +1,7 @@
 package message
 
 import (
-	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +23,6 @@ type mockStore struct {
 	convs        map[int64]*mysql.Conversation // key: ownerUID:targetID
 	msgs         map[int64][]*mysql.Message    // key: convID
 	readSeq      map[string]int64              // key: uid:convID
-	reactions    map[string][]mysql.Reaction   // key: convID:msgID（S6）
 	convSeq      int64
 	msgSeq       map[int64]int64
 	missingUIDs  map[int64]bool // 视为“不存在”的 uid（发送守卫测试用）
@@ -33,7 +30,7 @@ type mockStore struct {
 }
 
 func newMockStore() *mockStore {
-	return &mockStore{convs: map[int64]*mysql.Conversation{}, msgs: map[int64][]*mysql.Message{}, readSeq: map[string]int64{}, reactions: map[string][]mysql.Reaction{}, msgSeq: map[int64]int64{}, missingUIDs: map[int64]bool{}, disabledUIDs: map[int64]bool{}}
+	return &mockStore{convs: map[int64]*mysql.Conversation{}, msgs: map[int64][]*mysql.Message{}, readSeq: map[string]int64{}, msgSeq: map[int64]int64{}, missingUIDs: map[int64]bool{}, disabledUIDs: map[int64]bool{}}
 }
 
 func convKey(a, b int64) int64 { return a*1000000 + b }
@@ -65,6 +62,13 @@ func (m *mockStore) EnsureConversationID(ownerUID, targetID int64, typ int8, con
 	c := &mysql.Conversation{ID: convID, Type: typ, OwnerUID: ownerUID, TargetID: targetID}
 	m.convs[k] = c
 	return c, nil
+}
+
+// 群统一 conv_id：mock 用确定性映射（900000+gUID），便于断言
+func (m *mockStore) GetGroupConvID(gUID int64) (int64, error) { return 900000 + gUID, nil }
+
+func (m *mockStore) EnsureGroupConversationView(ownerUID, gUID, convID int64) (*mysql.Conversation, error) {
+	return m.EnsureConversationID(ownerUID, gUID, 2, convID)
 }
 func (m *mockStore) GetConversationByID(convID int64) (*mysql.Conversation, error) {
 	m.mu.Lock()
@@ -266,68 +270,6 @@ func clampMin0(n int64) int64 {
 		return 0
 	}
 	return n
-}
-
-// ---- G14 已读人数 / S6 表情回应 mock ----
-func (m *mockStore) CountRead(convID, seq int64) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	suffix := ":" + strconv.FormatInt(convID, 10)
-	n := 0
-	for key, s := range m.readSeq {
-		if strings.HasSuffix(key, suffix) && s >= seq {
-			n++
-		}
-	}
-	return n, nil
-}
-
-func (m *mockStore) AddReaction(id, convID, msgID, uid int64, emoji string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	key := fmt.Sprintf("%d:%d", convID, msgID)
-	for _, r := range m.reactions[key] {
-		if r.UID == uid && r.Emoji == emoji {
-			return nil // 幂等
-		}
-	}
-	m.reactions[key] = append(m.reactions[key], mysql.Reaction{ID: id, ConvID: convID, MsgID: msgID, UID: uid, Emoji: emoji})
-	return nil
-}
-
-func (m *mockStore) RemoveReaction(convID, msgID, uid int64, emoji string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	key := fmt.Sprintf("%d:%d", convID, msgID)
-	list := m.reactions[key]
-	out := list[:0]
-	for _, r := range list {
-		if !(r.UID == uid && r.Emoji == emoji) {
-			out = append(out, r)
-		}
-	}
-	m.reactions[key] = out
-	return nil
-}
-
-func (m *mockStore) ListReactions(convID int64, msgIDs []int64) (map[int64][]mysql.Reaction, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make(map[int64][]mysql.Reaction, len(msgIDs))
-	for _, mid := range msgIDs {
-		key := fmt.Sprintf("%d:%d", convID, mid)
-		if list := m.reactions[key]; len(list) > 0 {
-			out[mid] = append(out[mid], list...)
-		}
-	}
-	return out, nil
-}
-
-func (m *mockStore) ListReactionEmojis(convID, msgID int64) ([]mysql.Reaction, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	key := fmt.Sprintf("%d:%d", convID, msgID)
-	return append([]mysql.Reaction{}, m.reactions[key]...), nil
 }
 
 func (m *mockStore) CreateMessage(msg *mysql.Message) (int64, error) {
@@ -666,6 +608,55 @@ func TestGroupSendSyncsAllMembersConvLastMsg(t *testing.T) {
 	}
 }
 
+// TestGroupSendAfterDeleteReusesCanonicalConvID 验证：成员删除群会话后再次发言，
+// 视图以群统一 conv_id 重建（而非新 conv_id）。防止 conv_id 分叉——分叉会使消息
+// 落入割裂会话，且其他成员收到的推送帧无法映射到已有会话，导致本地重复建立群会话。
+func TestGroupSendAfterDeleteReusesCanonicalConvID(t *testing.T) {
+	svc, store, pushed := newTestSvc()
+	svc.SetGroupMembers(func(gUID int64) ([]int64, error) {
+		if gUID == 5001 {
+			return []int64{1001, 1002, 1003}, nil
+		}
+		return nil, nil
+	})
+	dto, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "第一条"})
+	if err != nil {
+		t.Fatalf("send1: %v", err)
+	}
+	canonical := dto.ConvID
+	if want := int64(905001); canonical != want { // mock 群统一 conv_id = 900000+gUID
+		t.Fatalf("canonical conv id=%d, want %d", canonical, want)
+	}
+	// 1001 删除自己的群会话视图（模拟用户删除会话）
+	if err := store.DeleteConversationByID(1001, canonical); err != nil {
+		t.Fatalf("delete conv: %v", err)
+	}
+	// 删除后再发言：视图必须以同一统一 conv_id 重建
+	dto2, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "删除后发言"})
+	if err != nil {
+		t.Fatalf("send2: %v", err)
+	}
+	if dto2.ConvID != canonical {
+		t.Fatalf("重建后 conv_id 分叉: got %d, want %d", dto2.ConvID, canonical)
+	}
+	conv, err := store.GetConversation(1001, 5001)
+	if err != nil || conv.ID != canonical {
+		t.Fatalf("发送者视图未按统一 conv_id 重建: conv=%+v err=%v", conv, err)
+	}
+	// 成员收到的推送帧 conv_id 也是统一值（客户端可映射到已有会话，不会重复建会话）
+	last := (*pushed)[len(*pushed)-1]
+	if last.ConvID != canonical {
+		t.Fatalf("pushed conv_id=%d, want %d", last.ConvID, canonical)
+	}
+	// 其他成员视图 conv_id 保持不变
+	for _, owner := range []int64{1002, 1003} {
+		c, err := store.GetConversation(owner, 5001)
+		if err != nil || c.ID != canonical {
+			t.Fatalf("成员 %d 视图 conv id=%d err=%v, want %d", owner, c.ID, err, canonical)
+		}
+	}
+}
+
 // TestGroupSendMentionNotify 验证 @ 提及通知钩子：群消息携带 mention_uids 落库后，
 // 仅对真实群成员触发（排除发送者自身与伪造 uid）；无 @ 不触发；幂等重发不重复触发。
 func TestGroupSendMentionNotify(t *testing.T) {
@@ -819,7 +810,7 @@ func TestUnreadCountLifecycle(t *testing.T) {
 }
 
 // TestSendGroupSystemMessageBatchViews 验证建群系统消息（审计 P1 批量化）：
-// 所有成员视图由单条批量语义创建，last_msg 为 [系统消息]，且不累加未读。
+// 所有成员视图由单条批量语义创建，last_msg 为 [系统消息] 占位，且不累加未读。
 func TestSendGroupSystemMessageBatchViews(t *testing.T) {
 	svc, store, _ := newTestSvc()
 	var pushedTo []int64
@@ -993,96 +984,4 @@ func containsInt64(list []int64, v int64) bool {
 		}
 	}
 	return false
-}
-
-// TestG14ReadCount 验证群已读人数：单聊拒绝、非会话成员拒绝、普通群成员拒绝、群主可查。
-func TestG14ReadCount(t *testing.T) {
-	svc, _, _ := newTestSvc()
-	svc.SetGroupMembers(func(gUID int64) ([]int64, error) {
-		if gUID == 5001 {
-			return []int64{1001, 1002, 1003}, nil
-		}
-		return nil, mysql.ErrNotFound
-	})
-	svc.SetGroupRoleCheck(func(gUID, uid int64) (int8, error) {
-		if uid == 1001 {
-			return 0, nil
-		}
-		return 2, nil
-	})
-	dto, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "已读测试"})
-	if err != nil {
-		t.Fatalf("send: %v", err)
-	}
-	// 单聊：拒绝
-	if _, err := svc.ReadCount(1001, dto.ConvID+9999, dto.ID); err == nil {
-		t.Fatal("不存在的会话应拒绝")
-	}
-	// 普通群成员：拒绝
-	if _, err := svc.ReadCount(1002, dto.ConvID, dto.ID); err == nil {
-		t.Fatal("普通成员应被拒绝查看已读人数")
-	}
-	// 群主：可查（0 人已读）
-	n, err := svc.ReadCount(1001, dto.ConvID, dto.ID)
-	if err != nil {
-		t.Fatalf("群主查已读人数: %v", err)
-	}
-	if n != 0 {
-		t.Fatalf("初始已读人数应为 0，实际 %d", n)
-	}
-	// 1002 已读后计数 1
-	if err := svc.MarkRead(1002, dto.ConvID, dto.Seq); err != nil {
-		t.Fatalf("mark read: %v", err)
-	}
-	if n, _ := svc.ReadCount(1001, dto.ConvID, dto.ID); n != 1 {
-		t.Fatalf("已读人数应为 1，实际 %d", n)
-	}
-}
-
-// TestS6Reaction 验证表情回应：增删/幂等/非成员拒绝/撤回消息拒绝/查询。
-func TestS6Reaction(t *testing.T) {
-	svc, _, _ := newTestSvc()
-	svc.SetGroupMembers(func(gUID int64) ([]int64, error) {
-		if gUID == 5001 {
-			return []int64{1001, 1002, 1003}, nil
-		}
-		return nil, mysql.ErrNotFound
-	})
-	dto, _, err := svc.Send(1001, &SendReq{TargetID: 5001, ConvType: 2, Type: 1, Content: "回应我"})
-	if err != nil {
-		t.Fatalf("send: %v", err)
-	}
-	// 非会话成员（9999）拒绝
-	if _, err := svc.SetReaction(9999, dto.ConvID, dto.ID, "👍", true); err == nil {
-		t.Fatal("非会话成员应被拒绝")
-	}
-	// 添加
-	change, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "👍", true)
-	if err != nil {
-		t.Fatalf("add reaction: %v", err)
-	}
-	if !change.Add || change.Emoji != "👍" || change.UID != 1002 {
-		t.Fatalf("change 异常: %+v", change)
-	}
-	// 重复添加幂等（行数不增）
-	if _, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "👍", true); err != nil {
-		t.Fatalf("dup add: %v", err)
-	}
-	if list, _ := svc.GetReactions(1001, dto.ConvID, dto.ID); len(list) != 1 {
-		t.Fatalf("reactions 应为 1 条，实际 %d", len(list))
-	}
-	// 移除
-	if _, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "👍", false); err != nil {
-		t.Fatalf("remove: %v", err)
-	}
-	if list, _ := svc.GetReactions(1001, dto.ConvID, dto.ID); len(list) != 0 {
-		t.Fatalf("移除后应为空，实际 %d", len(list))
-	}
-	// 撤回消息后拒绝添加
-	if _, err := svc.RecallMessage(1001, dto.ConvID, dto.ID); err != nil {
-		t.Fatalf("recall: %v", err)
-	}
-	if _, err := svc.SetReaction(1002, dto.ConvID, dto.ID, "❤️", true); err == nil {
-		t.Fatal("撤回消息不应能添加回应")
-	}
 }

@@ -225,6 +225,86 @@ func (d *DB) UpdateConversationSyncedSeq(ownerUID, targetID, seq int64) error {
 
 // ---- 群聊批量操作（审计 P1：替代逐成员查询+更新，消除写放大） ----
 
+// EnsureGroupConversationView 确保发送者的群会话视图存在且使用群统一 conv_id（groups.conv_id）。
+// 用户删除群会话后再次发言时，视图行必须以统一 conv_id 重建而非生成新 conv_id：
+// 否则消息会落入分叉会话（群历史割裂），且其他成员收到的推送帧 conv_id 无法映射到
+// 已有会话项，会在本地重复建立第二个群会话。
+// 已存在错误 conv_id 的视图行（旧版 bug 分叉脏数据）时，修复行 ID 并迁移分叉消息。
+func (d *DB) EnsureGroupConversationView(ownerUID, gUID, convID int64) (*Conversation, error) {
+	c, err := d.GetConversation(ownerUID, gUID)
+	if err == nil {
+		if c.ID == convID {
+			return c, nil
+		}
+		if err := d.repairDivergedGroupView(ownerUID, c.ID, convID); err != nil {
+			return nil, err
+		}
+		return d.GetConversation(ownerUID, gUID)
+	}
+	if err != ErrNotFound {
+		return nil, err
+	}
+	now := time.Now()
+	_, err = d.Exec(`INSERT INTO conversations (id, type, owner_uid, target_id, created_at)
+		VALUES (?, 2, ?, ?, ?)`, convID, ownerUID, gUID, now)
+	if err != nil {
+		// 并发下可能已被重建，重查
+		return d.GetConversation(ownerUID, gUID)
+	}
+	return &Conversation{ID: convID, Type: 2, OwnerUID: ownerUID, TargetID: gUID, CreatedAt: now}, nil
+}
+
+// repairDivergedGroupView 修复分叉的群会话视图（owner 的视图行 id 偏离群统一 conv_id）：
+// 1) 分叉期间误存的消息按 seq 升序读出，以统一会话当前最大 seq 为基数重排后迁入（避免 uk_conv_seq 冲突）；
+// 2) 已读游标按同一偏移平移（同 uid 在两侧都有记录时保留统一会话侧）；
+// 3) 视图行 id 改回统一 conv_id（conversations 主键为 (owner_uid, target_id)，id 列非唯一可更新）。
+func (d *DB) repairDivergedGroupView(ownerUID, oldID, newID int64) error {
+	oldShard := msgTable(oldID)
+	newShard := msgTable(newID)
+	rows, err := d.Query(`SELECT `+msgCols+` FROM `+oldShard+` WHERE conv_id = ? ORDER BY seq`, oldID)
+	if err != nil {
+		return err
+	}
+	var msgs []*Message
+	for rows.Next() {
+		m, err := scanMsg(rows)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		msgs = append(msgs, m)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	var base int64
+	if err := d.QueryRow(`SELECT COALESCE(MAX(seq),0) FROM `+newShard+` WHERE conv_id = ?`, newID).Scan(&base); err != nil {
+		return err
+	}
+	for i, m := range msgs {
+		var extraArg interface{}
+		if m.Extra != "" {
+			extraArg = m.Extra
+		}
+		if _, err := d.Exec(`INSERT INTO `+newShard+` (id, conv_id, seq, sender_uid, type, content, extra, status, created_at)
+			VALUES (?,?,?,?,?,?,?,?,?)`,
+			m.ID, newID, base+int64(i)+1, m.SenderUID, m.Type, m.Content, extraArg, m.Status, m.CreatedAt); err != nil {
+			return err
+		}
+	}
+	if len(msgs) > 0 {
+		if _, err := d.Exec(`DELETE FROM `+oldShard+` WHERE conv_id = ?`, oldID); err != nil {
+			return err
+		}
+	}
+	// 已读游标平移；同 uid 冲突时（两边都有记录）保留统一会话侧
+	_, _ = d.Exec(`DELETE FROM message_reads WHERE conv_id = ? AND uid IN (SELECT uid FROM (SELECT uid FROM message_reads WHERE conv_id = ?) t)`, oldID, newID)
+	_, _ = d.Exec(`UPDATE message_reads SET conv_id = ?, last_read_seq = last_read_seq + ? WHERE conv_id = ?`, newID, base, oldID)
+	_, err = d.Exec(`UPDATE conversations SET id = ? WHERE id = ? AND owner_uid = ?`, newID, oldID, ownerUID)
+	return err
+}
+
 // EnsureGroupConversationViews 批量确保群成员会话视图存在（单条 INSERT IGNORE）。
 // 所有成员共享同一 convID；主键为 (owner_uid, target_id)，重复成员自动忽略。
 func (d *DB) EnsureGroupConversationViews(convID, gUID int64, memberUIDs []int64) error {

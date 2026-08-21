@@ -684,12 +684,12 @@ func (s *Service) LeaveGroup(uid, gUID int64) error {
 	}
 	// 清理：删除退群者的群会话视图（会话列表不再展示该群）
 	_ = s.store.DeleteGroupConversationView(uid, gUID)
+	leaverName := s.Info(uid)
+	if leaverName == "" {
+		leaverName = "用户" + itoa(uid)
+	}
 	// "xx 退出群聊" 系统消息：仅群主可见/可收（其他成员无推送；历史加载时客户端也按身份过滤）
 	if s.groupSysMsgTo != nil && g.OwnerUID != uid {
-		leaverName := s.Info(uid)
-		if leaverName == "" {
-			leaverName = "用户" + itoa(uid)
-		}
 		b, jerr := json.Marshal(map[string]interface{}{
 			"kind":       "group_leave",
 			"leaver_uid":  uid,
@@ -705,6 +705,13 @@ func (s *Service) LeaveGroup(uid, gUID int64) error {
 	// 通知退群者（其他设备）清理会话
 	if s.notify != nil {
 		s.notify(uid, "group.left", ginMap("g_uid", gUID, "conv_id", itoa(g.ConvID)))
+	}
+	// 通知群内其他成员：成员列表变化（有人退群），客户端刷新群资料/成员列表/成员数
+	if s.notify != nil {
+		members, _ := s.store.ListGroupMembers(gUID) // 已移除退群者
+		for _, m := range members {
+			s.notify(m, "group.member_left", ginMap("g_uid", gUID, "uid", itoa(uid), "name", leaverName))
+		}
 	}
 	return nil
 }

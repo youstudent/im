@@ -49,16 +49,4 @@ export const messageApi = {
     const qs = q.toString()
     return http.get(`/conversations/search${qs ? '?' + qs : ''}`)
   },
-  // S6 表情回应：add=true 添加 / false 移除（仅本人反应可移除）；WS 优先，HTTP 兜底
-  setReaction(convId, msgId, emoji, add) {
-    return http.post(`/conversations/${convId}/messages/${msgId}/reactions`, { emoji, add })
-  },
-  // S6 查询单条消息的表情回应列表
-  getReactions(convId, msgId) {
-    return http.get(`/conversations/${convId}/messages/${msgId}/reactions`)
-  },
-  // G14 群消息已读人数（仅群主/管理员可查，企业微信策略）
-  readCount(convId, msgId) {
-    return http.get(`/conversations/${convId}/messages/${msgId}/read_count`)
-  },
 }

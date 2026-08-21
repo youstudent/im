@@ -76,10 +76,6 @@ func NewRouter(deps *Dependencies, mode string) *gin.Engine {
 			convGroup.POST("/:id/recall", deps.MessageHdlr.RecallMessage)
 			convGroup.PUT("/:id/settings", deps.MessageHdlr.UpdateSettings)
 			convGroup.DELETE("/:id", deps.MessageHdlr.DeleteConversation)
-			// G14 群消息已读人数（仅群主/管理员）；S6 表情回应增删/查询
-			convGroup.GET("/:id/messages/:mid/read_count", deps.MessageHdlr.ReadCount)
-			convGroup.POST("/:id/messages/:mid/reactions", deps.MessageHdlr.SetReaction)
-			convGroup.GET("/:id/messages/:mid/reactions", deps.MessageHdlr.GetReactions)
 		}
 		// 文件预签名（需鉴权）
 		fileGroup := api.Group("/files", middleware.JWT(deps.JWT))

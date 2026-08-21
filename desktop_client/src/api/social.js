@@ -8,11 +8,46 @@ import { http } from './http'
 // 共享缓存（跨组件）：friendList / groupList。
 // 缓存同时持久化到 localStorage，避免刷新浏览器后内存缓存丢失，
 // 导致消息页 buildContactMap 在缓存为空时强制请求 /friends、/groups（造成不必要的接口请求）。
-const FRIEND_CACHE_KEY = 'workchat:friends:cache'
-const GROUP_CACHE_KEY = 'workchat:groups:cache'
+// 缓存键账户化（workchat:{uid}:friends:cache）：多账户切换天然隔离，
+// 不再依赖登出时的 clearAccountCache 兜底（异常退出未走清理时下一账户会看到旧缓存）。
+function meUid() {
+  try {
+    const me = JSON.parse(localStorage.getItem('workchat:me') || 'null')
+    return me && me.uid ? String(me.uid) : ''
+  } catch {
+    return ''
+  }
+}
+function friendCacheKey() {
+  const uid = meUid()
+  return uid ? `workchat:${uid}:friends:cache` : ''
+}
+function groupCacheKey() {
+  const uid = meUid()
+  return uid ? `workchat:${uid}:groups:cache` : ''
+}
+
+// 旧版无账户键一次性迁移：归属给当前登录账户后删除旧键；
+// 未登录时无法确定归属，保留待下次登录时迁移（handleLoggedIn 会再次调用）。
+const LEGACY_FRIEND_KEY = 'workchat:friends:cache'
+const LEGACY_GROUP_KEY = 'workchat:groups:cache'
+function migrateLegacyCache(legacyKey, accountKey) {
+  if (!accountKey) return
+  try {
+    const legacy = localStorage.getItem(legacyKey)
+    if (legacy == null) return
+    localStorage.removeItem(legacyKey)
+    if (legacy && localStorage.getItem(accountKey) == null) localStorage.setItem(accountKey, legacy)
+  } catch {}
+}
+function migrateLegacyCaches() {
+  migrateLegacyCache(LEGACY_FRIEND_KEY, friendCacheKey())
+  migrateLegacyCache(LEGACY_GROUP_KEY, groupCacheKey())
+}
 
 // 从 localStorage 读取缓存（首次进入应用时恢复，避免刷新后缓存丢失）
 function readCache(key) {
+  if (!key) return null
   try {
     const raw = localStorage.getItem(key)
     if (raw) return JSON.parse(raw)
@@ -20,24 +55,47 @@ function readCache(key) {
   return null
 }
 function writeCache(key, value) {
+  if (!key) return
   try {
     localStorage.setItem(key, JSON.stringify(value))
   } catch {}
 }
 function clearStorageCache() {
   try {
-    localStorage.removeItem(FRIEND_CACHE_KEY)
-    localStorage.removeItem(GROUP_CACHE_KEY)
+    // 仅能删除当前可确定账户的键：登出流程中 me 已先行清除（键为空），
+    // 此时退出账户的持久化缓存保留，供同账户下次登录复用；旧键无条件清理
+    const fk = friendCacheKey()
+    const gk = groupCacheKey()
+    if (fk) localStorage.removeItem(fk)
+    if (gk) localStorage.removeItem(gk)
+    localStorage.removeItem(LEGACY_FRIEND_KEY)
+    localStorage.removeItem(LEGACY_GROUP_KEY)
   } catch {}
 }
 
-// 初始化内存缓存：优先用 localStorage 持久化的数据，避免刷新后丢失
-let friendListCache = readCache(FRIEND_CACHE_KEY)
-let groupListCache = readCache(GROUP_CACHE_KEY)
+// 初始化内存缓存：先迁移旧键，再从当前账户的持久化数据恢复
+migrateLegacyCaches()
+// 内存缓存归属账户：异常路径（崩溃/被踢）若漏了缓存清理，账户不匹配时按无缓存处理，防止串账户展示
+let cacheOwner = meUid()
+let friendListCache = readCache(friendCacheKey())
+let groupListCache = readCache(groupCacheKey())
+
+// 切换登录账户后重载：迁移旧键 → 以新账户键恢复持久化缓存到内存（秒开）
+function reloadFromStorage() {
+  migrateLegacyCaches()
+  cacheOwner = meUid()
+  friendListCache = readCache(friendCacheKey())
+  groupListCache = readCache(groupCacheKey())
+}
+
+function ownerOk() {
+  return cacheOwner === meUid()
+}
 
 function clearCache() {
   friendListCache = null
   groupListCache = null
+  cacheOwner = meUid()
   clearStorageCache()
 }
 
@@ -46,30 +104,46 @@ export const friendApi = {
   async list(force = false) {
     if (force) {
       const data = await http.get('/friends')
+      cacheOwner = meUid()
       friendListCache = data || []
-      writeCache(FRIEND_CACHE_KEY, friendListCache)
+      writeCache(friendCacheKey(), friendListCache)
       return friendListCache
     }
-    return friendListCache || []
+    return ownerOk() ? friendListCache || [] : []
   },
   // 读缓存（不请求），供消息页等复用
   getCachedFriends() {
-    return friendListCache || []
+    return ownerOk() ? friendListCache || [] : []
   },
   // 缓存是否已初始化（含空列表），用于判断是否需要真正请求后端
   isFriendCacheLoaded() {
-    return friendListCache !== null
+    return ownerOk() && friendListCache !== null
   },
   // 仅失效好友缓存（好友关系变化时用，不影响群缓存）
   clearFriendCache() {
     friendListCache = null
     try {
-      localStorage.removeItem(FRIEND_CACHE_KEY)
+      const k = friendCacheKey()
+      if (k) localStorage.removeItem(k)
+      localStorage.removeItem(LEGACY_FRIEND_KEY)
     } catch {}
   },
-  // 账户级缓存清理：登出/被踢时调用，避免下一账户看到旧账户的好友/群缓存
+  // 仅失效群缓存（新群创建/被邀请入群时用，不影响好友缓存）
+  clearGroupCache() {
+    groupListCache = null
+    try {
+      const k = groupCacheKey()
+      if (k) localStorage.removeItem(k)
+      localStorage.removeItem(LEGACY_GROUP_KEY)
+    } catch {}
+  },
+  // 账户级缓存清理：登出/被踢/清除账户数据时调用，避免下一账户看到旧账户的好友/群缓存
   clearAccountCache() {
     clearCache()
+  },
+  // 切换登录账户后重载缓存：迁移旧键并把新账户的持久化缓存载入内存（登录成功时调用）
+  reloadAccountCache() {
+    reloadFromStorage()
   },
   async listRequests() {
     return http.get('/friends/requests')
@@ -94,9 +168,9 @@ export const friendApi = {
   // 设置好友备注（空字符串清除）；成功后就地更新缓存与持久化，避免全量重拉
   async setRemark(uid, remark) {
     const r = await http.put(`/friends/${uid}/remark`, { remark })
-    if (friendListCache) {
+    if (ownerOk() && friendListCache) {
       friendListCache = friendListCache.map((f) => (Number(f.uid) === Number(uid) ? { ...f, remark } : f))
-      writeCache(FRIEND_CACHE_KEY, friendListCache)
+      writeCache(friendCacheKey(), friendListCache)
     }
     return r
   },
@@ -113,18 +187,19 @@ export const groupApi = {
   async list(force = false) {
     if (force) {
       const data = await http.get('/groups')
+      cacheOwner = meUid()
       groupListCache = data || []
-      writeCache(GROUP_CACHE_KEY, groupListCache)
+      writeCache(groupCacheKey(), groupListCache)
       return groupListCache
     }
-    return groupListCache || []
+    return ownerOk() ? groupListCache || [] : []
   },
   getCachedGroups() {
-    return groupListCache || []
+    return ownerOk() ? groupListCache || [] : []
   },
   // 缓存是否已初始化（含空列表），用于判断是否需要真正请求后端
   isGroupCacheLoaded() {
-    return groupListCache !== null
+    return ownerOk() && groupListCache !== null
   },
   get(gUid) {
     return http.get(`/groups/${gUid}`)

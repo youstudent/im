@@ -202,6 +202,9 @@ function handleLoggedIn(user, hasPendingFriendRequest = false) {
   if (user && user.uid) {
     localdb.session.open(user.uid)
   }
+  // 多账户隔离：切换账户后重载联系人缓存（迁移旧键 + 以新账户键载入持久化缓存）；
+  // 内存缓存可能残留上一账户数据（异常退出未走登出清理），账户不匹配时按无缓存处理
+  friendApi.reloadAccountCache()
   // 登录接口返回是否有待处理好友申请，直接初始化导航栏红点（无需额外请求 /friends/requests）
   addFriendBadge.value = !!hasPendingFriendRequest
   // 登录成功：监听 WS 实时推送

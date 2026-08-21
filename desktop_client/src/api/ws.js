@@ -39,7 +39,6 @@ const listeners = {
   message: [], // (msg) => {} 收到新消息
   read: [], // (data) => {} 对方已读
   call: [], // (data) => {} 通话信令（call.push 帧）
-  reaction: [], // (data) => {} 表情回应变更（S6 reaction 帧）
   typing: [], // (data) => {} 对方正在输入（S7 typing 帧）
   open: [],
   close: [],
@@ -129,16 +128,6 @@ export const wsClient = {
   // body: { call_id, action, to, payload }
   sendCall(body) {
     return sendFrame('call', body)
-  },
-
-  // 表情回应（S6）：add=true 添加 / false 移除；HTTP 兜底在 api/message.js，WS 仅发送（无需 ack 确认）
-  sendReaction(convId, msgId, emoji, add) {
-    return sendFrame('reaction', {
-      conv_id: String(convId),
-      msg_id: String(msgId),
-      emoji,
-      add: !!add,
-    })
   },
 
   // 正在输入（S7）：3s 节流防抖，避免输入过程中高频刷帧
@@ -274,10 +263,6 @@ function handleFrame(frame) {
     case 'call.push':
       // 通话信令：转交通话状态机处理（invite/answer/ice/reject/busy/cancel/hangup/offline）
       emit('call', frame.body)
-      break
-    case 'reaction':
-      // 表情回应变更（S6）：{ conv_id, msg_id, uid, emoji, add }
-      emit('reaction', frame.body)
       break
     case 'typing':
       // 对方正在输入（S7）：{ conv_id }

@@ -1,41 +1,42 @@
 # IM Service（Go 服务端）
 
-IM 即时通讯系统服务端，采用 Go + Gin + MySQL + Redis + 阿里云 OSS。
+IM 即时通讯系统服务端：Go + Gin + MySQL + Redis + 阿里云 OSS。提供认证、单聊/群聊消息、好友与群组关系、WebSocket 长连接网关、文件预签名与管理后台 API。
 
 ## 技术栈
 
 | 层 | 选型 |
 |---|---|
 | HTTP 框架 | Gin |
-| 数据库 | MySQL 8.0（go-sql-driver） |
-| 缓存/在线/未读/路由 | Redis（go-redis/v9） |
-| 对象存储 | 阿里云 OSS（预签名直传） |
-| 鉴权 | golang-jwt/v5 |
+| 数据库 | MySQL 8.0（go-sql-driver；消息分 4 表，FNV 散列路由） |
+| 缓存/在线/路由 | Redis（go-redis/v9：在线状态、离线队列、跨节点 Pub/Sub、原子 seq 取号、令牌黑名单） |
+| 对象存储 | 阿里云 OSS（预签名直传，extra.url 域名白名单校验） |
+| 鉴权 | golang-jwt/v5（用户 JWT 双令牌 + 独立 admin JWT） |
 | 日志 | 标准库 slog（结构化 JSON） |
 
 ## 目录结构
 
 ```
 service/
-├── configs/config.yaml       # 配置
+├── configs/config.yaml       # 配置（不入库，见 config.example.yaml）
 ├── cmd/
-│   ├── server/main.go        # 服务启动入口（HTTP + WS）
-│   └── migrate/main.go       # 独立迁移命令
+│   ├── server/main.go        # 服务启动入口（HTTP + WS，启动时自动执行迁移）
+│   ├── migrate/main.go       # 独立迁移命令
+│   └── diag_trend/main.go    # 数据看板趋势诊断工具
 ├── internal/
 │   ├── config/               # 配置加载与校验
-│   ├── server/               # 路由装配 + 中间件
-│   ├── gateway/              # WebSocket 网关（连接/心跳/鉴权/路由/推送）
-│   ├── auth/                 # 认证（注册/登录/JWT刷新/二维码）
-│   ├── message/              # 消息（发送/历史/已读/未读/搜索）
-│   ├── social/               # 社交（好友/群组/通知）
-│   ├── admin/                # 管理后台（登录/看板/用户/群组）
+│   ├── server/               # 路由装配 + 中间件（日志/恢复/CORS/JWT/AdminAuth）
+│   ├── gateway/              # WebSocket 网关：鉴权/心跳/ack/离线队列/跨节点路由/通话信令转发
+│   ├── auth/                 # 认证：注册/登录/JWT 刷新（轮换+黑名单）/二维码登录
+│   ├── message/              # 消息：发送/历史/撤回/已读/未读/搜索/会话视图管理
+│   ├── social/               # 社交：好友/群组/群成员/通知/入群确认/禁言
+│   ├── admin/                # 管理后台：登录/看板/用户/群组/版本发布
 │   ├── file/                 # 文件预签名（OSS）
 │   ├── store/                # 数据访问层
-│   │   ├── mysql/            # 连接池 + 迁移 + 用户 DAO
+│   │   ├── mysql/            # 连接池 + DAO（用户/会话/消息/群/通知/管理员/版本）
 │   │   ├── redis/            # 客户端封装
 │   │   └── oss/              # 阿里云 OSS 预签名
 │   └── pkg/                  # err / resp / log / jwt / snowflake / pwd
-├── migrations/               # SQL 迁移文件
+├── migrations/               # SQL 迁移文件（0001~0014）
 ├── docker-compose.yml        # 本地 MySQL + Redis
 └── Makefile
 ```
@@ -46,12 +47,13 @@ service/
 # 1. 启动本地依赖（MySQL + Redis）
 make docker-up
 
-# 2. 配置 config.yaml（改 DSN / Redis / JWT secret / OSS 密钥）
+# 2. 配置 config.yaml（MySQL DSN / Redis / JWT secret / OSS 密钥）
+#    注意：migrate_dir 需为绝对路径
 
-# 3. 执行数据库迁移
+# 3. 执行数据库迁移（服务启动时也会自动补齐）
 make migrate
 
-# 4. 启动服务
+# 4. 启动服务（默认 :8080）
 make run
 
 # 5. 健康检查
@@ -63,138 +65,143 @@ curl http://127.0.0.1:8080/healthz
 
 ```bash
 make run          # 运行
-make build        # 编译到 bin/
+make build        # 编译到 bin/im-server
 make migrate      # 执行迁移
+make test         # 运行单测（内存 mock，无需数据库）
+make lint         # go vet 静态检查
 make docker-up    # 起 MySQL + Redis
 make docker-down  # 停依赖
 make tidy         # 整理依赖
 ```
 
-## 阶段一完成项
+## HTTP 接口总览
 
-- [x] Go 模块与分层目录骨架
-- [x] 配置加载（config.yaml）
-- [x] MySQL 连接池 + 迁移机制
-- [x] Redis 客户端
-- [x] 阿里云 OSS 预签名封装
-- [x] 统一响应 / 错误码 / 请求日志 / panic 恢复中间件
-- [x] 雪花 ID 生成器
-- [x] docker-compose（mysql + redis）
-- [x] /healthz 健康检查 + Makefile
+> 统一响应 `{ code, message, data }`，`code===0` 成功。用户接口鉴权头 `Authorization: Bearer <access_token>`；雪花 ID 一律以字符串下发（防 JS 精度丢失）。
 
-## 阶段二完成项（认证与登录）
-
-- [x] users 表迁移（含 email，用于找回密码）
-- [x] 注册接口（bcrypt 加密，账号/昵称/密码校验，注册即登录）
-- [x] 登录接口（签发 access + refresh token）
-- [x] JWT 鉴权中间件 + `/auth/refresh` 刷新（令牌轮换 + 黑名单撤销）
-- [x] 退出登录（refresh token 撤销）
-- [x] 二维码登录（qrcodeId 生成 / 轮询 / 确认，Redis 存状态）
-- [x] 认证单元测试（注册/登录/刷新/退出/二维码闭环）
-
-### 认证接口
+### 认证 `/api/v1/auth`（无需鉴权）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/auth/register` | 注册（返回 access + refresh + 用户信息） |
-| POST | `/api/v1/auth/login` | 登录 |
-| POST | `/api/v1/auth/refresh` | 刷新令牌 |
-| POST | `/api/v1/auth/logout` | 退出（撤销 refresh） |
-| POST | `/api/v1/auth/qrcode/create` | 生成二维码 |
-| POST | `/api/v1/auth/qrcode/poll` | 轮询二维码状态 |
-| POST | `/api/v1/auth/qrcode/confirm` | 手机扫码确认 |
+| POST | `/register` | 注册（bcrypt，注册即登录，返回双令牌） |
+| POST | `/login` | 登录（返回双令牌 + 是否有待处理好友申请） |
+| POST | `/refresh` | 刷新令牌（轮换 + 旧令牌黑名单撤销） |
+| POST | `/logout` | 退出（撤销 refresh） |
+| POST | `/qrcode/create` `/qrcode/poll` | 二维码生成 / 轮询 |
+| POST | `/qrcode/confirm` | 扫码确认（需登录，确认者 uid 取自令牌） |
 
-> 统一响应：`{ code, message, data }`，code===0 表示成功。鉴权头：`Authorization: Bearer <access_token>`。
-
-## 阶段三完成项（消息与长连接）
-
-- [x] 会话/消息/已读表迁移（消息分 4 表，`conv_id % 4` 路由）
-- [x] WS 网关：建连 auth 首帧鉴权、心跳、断线清理、Redis 在线状态
-- [x] 消息发送链路：msgId 幂等去重 → 落库 → 会话内 seq → 推送接收方
-- [x] 单聊历史拉取 + 会话最后消息
-- [x] 已读回执（read → 落库 + read.sync 广播）
-- [x] Redis Pub/Sub 跨节点消息路由（uid→节点 映射 + 频道订阅）
-- [x] HTTP 会话/消息接口 + 消息服务单元测试
-
-### 会话 / 消息接口（需鉴权）
+### 会话 / 消息 `/api/v1/conversations`（需鉴权）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/v1/conversations` | 会话列表 |
-| POST | `/api/v1/conversations` | 发送消息（低频兜底） |
-| GET | `/api/v1/conversations/:id/messages` | 拉取历史消息 |
-| WS | `/ws` | 长连接网关 |
+| GET | `` | 会话列表；`?changed_since=<unix秒>` 差量刷新（仅返回此后变化的会话） |
+| POST | `` | 发送消息（WS 的 HTTP 兜底；msg_id 幂等） |
+| GET | `/search` | 消息搜索（keyword / type，跨分表） |
+| GET | `/:id/messages` | 历史消息（`after_seq` 增量 / `before_seq` 翻页） |
+| POST | `/:id/recall` | 撤回消息（2 分钟时限） |
+| PUT | `/:id/settings` | 置顶 / 免打扰 |
+| DELETE | `/:id` | 删除会话（仅删本人视图行保留消息，再收发自动重建） |
 
-### WS 帧（阶段三已启用）
-
-- `auth`（C→S 首帧，body `{token}`）
-- `heartbeat`（C↔S 心跳）
-- `msg`（C→S 发送，body `{msg_id, conv_id, target_id, type, content}`）
-- `msg.push`（S→C 推送）
-- `read`（C→S 已读，body `{conv_id, seq}`）
-- `read.sync`（S→C 已读广播）
-- `ack`（C→S 送达回执）
-- `social`（S→C 好友/群事件推送，body `{event, data}`）
-
-## 阶段四完成项（社交与群组）
-
-- [x] 好友/群/群成员/申请/通知表迁移
-- [x] 好友：申请 / 接受 / 拒绝 / 删除 / 列表 / 待处理申请列表
-- [x] 群组：建群 / 邀请 / 退群 / 成员 / 群信息
-- [x] 群聊多路分发（`conv_type=2` → 群成员列表推送）
-- [x] 通知：reply/mention/system/friend/invite 类型、已读、聚合、未读计数
-- [x] 好友/建群业务实时推送（WS `social` 帧）
-- [x] 社交服务单元测试
-
-### 社交接口（需鉴权）
+### 好友 / 用户 / 通知（需鉴权）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/v1/friends` | 好友列表 |
-| GET | `/api/v1/friends/requests` | 我收到的待处理申请 |
-| POST | `/api/v1/friends/requests` | 发送好友申请 |
-| POST | `/api/v1/friends/requests/:id/handle` | 处理申请（accept） |
+| GET | `/api/v1/friends` | 好友列表（含备注） |
+| GET/POST | `/api/v1/friends/requests` | 待处理申请列表 / 发送申请（防自加/防重复） |
+| POST | `/api/v1/friends/requests/:id/handle` | 处理申请（accept/reject） |
+| PUT | `/api/v1/friends/:uid/remark` | 设置好友备注 |
 | DELETE | `/api/v1/friends/:uid` | 删除好友 |
-| POST | `/api/v1/groups` | 建群 |
-| GET | `/api/v1/groups` | 我加入的群 |
-| GET | `/api/v1/groups/:gid` | 群详情 |
-| POST | `/api/v1/groups/:gid/members` | 邀请入群 |
-| DELETE | `/api/v1/groups/:gid/members/me` | 退群 |
-| GET | `/api/v1/notifications` | 通知列表 |
-| POST | `/api/v1/notifications/read` | 标记已读（?all=1 全部） |
+| GET | `/api/v1/users/search` | 用户搜索（账号/昵称，加好友用） |
+| GET | `/api/v1/notifications` | 通知列表（好友/邀请/入群确认/@提及/系统） |
+| POST | `/api/v1/notifications/read` | 标记已读（`?all=1` 全部 / `?id=` 单条） |
 | GET | `/api/v1/notifications/unread` | 未读通知数 |
 | DELETE | `/api/v1/notifications` | 清空通知 |
 
-> 群聊消息：WS `msg` 帧 body 增加 `conv_type`（1 单聊 / 2 群聊），群聊时 `target_id` 为群 `g_uid`。
-
-## 阶段五完成项（富媒体与后台）
-
-- [x] OSS 预签名上传接口（图片/文件/语音，objectKey 按 uid/类型隔离）
-- [x] 消息搜索接口（关键字 LIKE + 类型过滤，跨分表）
-- [x] admin 管理员表 + 默认管理员 seed（admin/admin123）
-- [x] admin 登录鉴权（独立 admin JWT，IsAdmin 声明 + AdminAuth 中间件）
-- [x] admin 数据看板 / 用户管理 / 群组管理接口
-- [x] admin 前端骨架（Vue3 + Vite，登录/看板/用户/群组）
-- [x] admin 单元测试
-
-### 富媒体 / 搜索接口（需鉴权）
+### 群组 `/api/v1/groups`（需鉴权）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/files/presign` | 生成 OSS 预签名上传/下载 URL |
-| GET | `/api/v1/conversations/search` | 消息搜索（keyword / type） |
+| POST | `` | 建群（成员共享群统一 conv_id） |
+| GET | `` | 我加入的群 |
+| GET | `/:gid` | 群详情（成员/公告/我的角色/我的禁言截止） |
+| PUT | `/:gid` | 修改群名 / 公告（群主/管理员） |
+| POST | `/:gid/members` | 邀请入群（开启入群确认时转待确认通知） |
+| POST | `/:gid/invites/decide` | 入群确认处理（群主/管理员） |
+| DELETE | `/:gid/members/me` | 退群 |
+| POST | `/:gid/members/:uid/kick` | 移除成员（群主/管理员） |
+| PUT | `/:gid/members/:uid/role` | 设/撤管理员（群主） |
+| PUT | `/:gid/members/:uid/mute` | 成员禁言/解除（群主/管理员） |
+| PUT | `/:gid/owner` | 转让群主 |
+| PUT | `/:gid/members/me/nickname` | 设置我的群昵称 |
+| PUT | `/:gid/settings` | 入群确认 / 全员禁言开关（群主/管理员） |
+| PUT | `/:gid/saved` | 保存到通讯录开关 |
 
-### 管理后台接口
+### 文件 / 版本
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/admin/login` | 管理员登录（返回 admin JWT） |
-| GET | `/api/admin/dashboard` | 数据看板统计 |
-| GET | `/api/admin/users` | 用户列表（offset/limit） |
-| DELETE | `/api/admin/users/:uid/disable` | 禁用用户 |
-| GET | `/api/admin/groups` | 群列表（offset/limit） |
-| DELETE | `/api/admin/groups/:gid` | 解散群 |
+| POST | `/api/v1/files/presign` | OSS 预签名上传/下载（objectKey 按 uid/类型隔离） |
+| GET | `/api/v1/version/latest` | 客户端检查更新（公开接口，仅非敏感版本信息） |
 
-> admin 接口前缀 `/api/admin`，除 login 外均需 `Authorization: Bearer <admin_token>`。
-> 默认管理员：admin / admin123（首次启动自动创建）。
-> admin 前端：`cd admin && npm run dev`，默认端口 5174。
+### 管理后台 `/api/admin`（除 login 外需 admin JWT）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/login` | 管理员登录（默认 admin/admin123，首次登录强制改密） |
+| POST | `/password` | 修改自己的密码 |
+| GET | `/dashboard` | 数据看板统计（用户/消息/群组/趋势） |
+| GET | `/users` | 用户列表（offset/limit/keyword 搜索） |
+| DELETE | `/users/:uid/disable` `/users/:uid/enable` | 禁用 / 启用用户（禁用后踢线） |
+| GET | `/groups` | 群列表（offset/limit/keyword 搜索） |
+| GET | `/groups/:gid/messages` | 查看群消息 |
+| DELETE | `/groups/:gid` | 解散群（全量清理并实时通知成员） |
+| POST | `/version` · GET `/versions` | 版本发布 / 版本列表 |
+| POST | `/files/presign` | 管理端上传预签名（安装包直传 OSS） |
+
+## WebSocket 协议（`/ws`）
+
+首帧 `auth` 鉴权（body `{token}`），心跳约 30s，断线进入离线队列（内容帧/控制帧分级，7 天 TTL），重连后补推。
+
+| 帧 | 方向 | 说明 |
+|---|---|---|
+| `auth` | C→S | 建连鉴权 |
+| `heartbeat` | C↔S | 心跳 |
+| `msg` | C→S | 发送消息（body 含 `msg_id/conv_id/target_id/conv_type/type/content/extra`） |
+| `msg.push` | S→C | 推送消息（携带 `conv_type/target_id`，接收方删除会话后可据此重建） |
+| `ack` | C→S | 送达回执（超时重发由网关跟踪） |
+| `read` / `read.sync` | C→S / S→C | 已读回执与广播 |
+| `typing` | C↔S | 正在输入（仅单聊） |
+| `social` | S→C | 好友/群/会话事件（`friend.accepted`、`conversation.created`、`group.updated`、`group.left`、`group.kicked`、`group.muted`、`group.announcement` 等） |
+| `notify` | S→C | 通知提醒 |
+| `kick` | S→C | 强制下线（账号被禁用/他处登录） |
+| `call` / `call.push` | C→S / S→C | 语音通话信令（纯转发，不落库） |
+
+## 关键设计
+
+- **会话视图模型**：每个用户一张会话视图行，主键 `(owner_uid, target_id)`；单聊双方 / 群全体成员共享同一业务 `conv_id`（`groups.conv_id` 为群统一会话 ID）。删除会话仅删视图行，再次收发消息自动以统一 conv_id 重建（防 conv_id 分叉）。
+- **消息分表**：`messages_0~3`，按 conv_id FNV-1a 散列路由；会话内 seq 单调（Redis INCR 原子取号，本地 MAX+1 兜底）。
+- **未读计数**：`unread_count` 列维护（发消息累加、已读清零、撤回递减），消除撤回场景虚高。
+- **群聊批量写**：最后消息/未读/同步游标均为单条批量 SQL（按 `target_id`），消除逐成员写放大。
+- **发送守卫**：单聊目标用户存在且未禁用；群聊必须为成员；全员禁言/个人禁言校验；敏感词过滤；每用户 20 条/秒频率风控；extra ≤2KB 且媒体 URL 域名白名单。
+- **差量同步**：会话列表支持 `changed_since`；客户端据此做本地秒开 + 增量刷新。
+- **离线投递**：用户离线时帧入 Redis 离线队列（内容帧上限 1000 / 控制帧 200），重连补推。
+
+## 数据库迁移（migrations/）
+
+| 文件 | 内容 |
+|---|---|
+| 0001~0004 | 用户 / 会话 / 消息分表 / 社交（好友/群/通知）/ 管理员基础表 |
+| 0005 / 0006 | 单聊双方共享 conv_id；群统一 conv_id（groups.conv_id） |
+| 0007 / 0011 | 用户禁用列；管理员首次登录强制改密 |
+| 0008 / 0010 | 应用版本表（含安装包 sha256） |
+| 0009 | 会话 unread_count 未读计数列 |
+| 0012 | 群增强（群昵称等） |
+| 0013 | 会话最后消息发送者（群列表"发送者: 内容"前缀） |
+| 0014 | 群 P2：入群确认 / 全员禁言 / 成员禁言 / 保存到通讯录 |
+
+## 测试
+
+```bash
+make test   # go test ./...（内存 mock Store，无需数据库/Redis）
+```
+
+覆盖认证闭环、消息发送/幂等/撤回/未读、群聊分发与 P2、会话删除重建防分叉、搜索、WS 可靠性（心跳/ack/多端投递）等。

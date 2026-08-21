@@ -105,13 +105,15 @@ export function toConvItem(c, contactMap) {
   const key = String(c.target_id)
   const info = contactMap.get(key) || {}
   const lastMsgTime = Number(c.last_msg_time) || 0
+  const isGroup = Number(c.type) === 2
   return {
     id: `conv-${c.id}`,
-    name: info.name || `用户 ${c.target_id}`,
+    // 群聊回退"群 {g_uid}"（与 insertConvFromEvent 一致）；单聊回退"用户 {uid}"
+    name: info.name || (isGroup ? `群 ${c.target_id}` : `用户 ${c.target_id}`),
     avatar: info.avatar || '?',
     color: info.color || '#64748b',
     online: false,
-    type: Number(c.type) === 2 ? 'group' : info.type || null,
+    type: isGroup ? 'group' : info.type || null,
     lastMessage: c.last_msg || '',
     // 最后消息发送者（群聊列表拼 "发送者: 内容" 前缀，渲染时动态解析名称）；
     // 服务端 DTO 与本地库行同名字段，0/空表示系统/无
@@ -190,7 +192,6 @@ export function createMessageMapper(deps) {
       time: formatMsgTime(m.created_at),
       server: true,
       voicePlayed: !!flags.voicePlayed, // 语音已播放标记（本地库加载时传入，红点状态随消息恢复）
-      reactions: Array.isArray(m.reactions) ? m.reactions : [], // S6 表情回应（服务端历史/增量携带）
     }
   }
 

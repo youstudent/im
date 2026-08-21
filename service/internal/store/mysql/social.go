@@ -3,6 +3,7 @@ package mysql
 
 import (
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 )
@@ -198,6 +199,23 @@ func (d *DB) GetGroupByGUID(gUID int64) (*Group, error) {
 		return nil, err
 	}
 	return g, nil
+}
+
+// GetGroupConvID 查询群的统一会话 ID（groups.conv_id，全体成员共享）。
+// 群不存在返回 ErrNotFound；conv_id 为 NULL（迁移 0006 未执行的历史数据）时兜底用 groups 主键 id。
+func (d *DB) GetGroupConvID(gUID int64) (int64, error) {
+	var convID, groupID sql.NullInt64
+	err := d.QueryRow("SELECT conv_id, id FROM `groups` WHERE g_uid = ?", gUID).Scan(&convID, &groupID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	if convID.Valid && convID.Int64 > 0 {
+		return convID.Int64, nil
+	}
+	return groupID.Int64, nil
 }
 
 // GetGroupsByGUIDs 批量按群号查群（群列表场景，替代逐个 GetGroupByGUID 的 N+1）。

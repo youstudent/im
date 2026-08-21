@@ -85,13 +85,35 @@ export function useConvMenu(ctx) {
     if (conv.convId) localdb.conversations.setMarkedUnread(String(conv.convId), next ? 1 : 0)
   }
 
-  // 删除会话：二次确认 → 本地列表与本地库即时清理，服务端删会话视图行（消息保留，再收发自动重建）
-  async function removeConversation() {
+  // 删除会话：打开自定义确认弹框（危险操作风格，替代原生 confirm），确认后由外部执行 deleteConv
+  const showDeleteConfirm = ref(false)
+  const deleting = ref(false)
+  const pendingDelete = ref(null) // 待删除的会话项（弹框确认期间保留引用）
+
+  function removeConversation() {
     const conv = menuConv.value
     if (!conv) return
+    pendingDelete.value = conv
     closeConvMenu()
-    if (!window.confirm(`删除会话“${conv.name}”？本地聊天记录将一并清除（服务端消息保留）。`)) return
-    if (deleteConv) await deleteConv(conv)
+    showDeleteConfirm.value = true
+  }
+
+  // 确认删除：执行外部清理（本地列表/本地库 + 服务端视图行），成功即关闭弹框
+  async function confirmDelete() {
+    if (deleting.value || !pendingDelete.value) return
+    deleting.value = true
+    try {
+      if (deleteConv) await deleteConv(pendingDelete.value)
+      showDeleteConfirm.value = false
+      pendingDelete.value = null
+    } finally {
+      deleting.value = false
+    }
+  }
+
+  function cancelDelete() {
+    showDeleteConfirm.value = false
+    pendingDelete.value = null
   }
 
   function closeConvMenu() {
@@ -109,5 +131,5 @@ export function useConvMenu(ctx) {
     document.removeEventListener('scroll', closeConvMenu, true)
   })
 
-  return { convMenu, menuConv, openConvMenu, togglePin, toggleMute, toggleMarkUnread, removeConversation, closeConvMenu, applySettings }
+  return { convMenu, menuConv, openConvMenu, togglePin, toggleMute, toggleMarkUnread, removeConversation, closeConvMenu, applySettings, showDeleteConfirm, deleting, pendingDelete, confirmDelete, cancelDelete }
 }

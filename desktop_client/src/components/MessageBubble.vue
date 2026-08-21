@@ -12,19 +12,9 @@ const props = defineProps({
   voice: { type: Object, default: null },
   // 引用发送者名称解析（可选）：(uid, fallback) => 展示名，使备注变更后引用名同步刷新
   resolveName: { type: Function, default: null },
-  // S6 表情回应（已聚合）：[{ emoji, count, mine }]，父组件按消息渲染时传入
-  reactions: { type: Array, default: () => [] },
-  // 是否可添加表情回应（会话成员均可；消息未撤回时父组件保证）
-  canReact: { type: Boolean, default: true },
-  // G14 群已读人数：showReadCount=true 且 readCount>0 时气泡下方显示 "N 人已读"
-  showReadCount: { type: Boolean, default: false },
-  readCount: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['menu', 'image-loaded', 'open-image', 'open-video', 'open-file', 'video-error', 'quote-jump', 'open-merge', 'react'])
-
-// S6 快捷表情栏：hover 气泡时浮现（微信风格：点赞/爱心/大笑/惊讶/哭/生气）
-const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '😡']
+const emit = defineEmits(['menu', 'image-loaded', 'open-image', 'open-video', 'open-file', 'video-error', 'quote-jump', 'open-merge'])
 
 // 文本分段：携带 mention_uids 时把 @xxx 片段高亮（蓝色），其余原样保留换行
 const textSegments = computed(() => {
@@ -179,37 +169,6 @@ const mergeData = computed(() => {
         <span class="quote-line">{{ quoteSenderName }}：{{ quoteSummary }}</span>
       </template>
     </div>
-
-    <!-- S6 表情回应：已添加的反应横排展示（点击自己的反应可取消）；hover 快捷表情栏 -->
-    <div v-if="reactions.length" class="reaction-row" @click.stop>
-      <button
-        v-for="r in reactions"
-        :key="r.emoji"
-        class="reaction-chip"
-        :class="{ mine: r.mine }"
-        :title="`${r.count} 人回应`"
-        @click.stop="emit('react', { emoji: r.emoji, add: !r.mine })"
-      >
-        <span class="reaction-emoji">{{ r.emoji }}</span>
-        <span class="reaction-count">{{ r.count }}</span>
-      </button>
-    </div>
-
-    <!-- G14 已读人数：仅群主/管理员视角展示 -->
-    <span v-if="showReadCount && readCount > 0" class="read-count" @click.stop>已读 {{ readCount }} 人</span>
-
-    <!-- S6 快捷表情栏：hover 气泡浮现（不可撤回消息不展示） -->
-    <div v-if="canReact && msg.status !== 1" class="quick-reaction" @click.stop>
-      <button
-        v-for="e in QUICK_EMOJIS"
-        :key="e"
-        class="quick-reaction-btn"
-        :title="`回应 ${e}`"
-        @click.stop="emit('react', { emoji: e, add: true })"
-      >
-        {{ e }}
-      </button>
-    </div>
   </div>
 </template>
 
@@ -217,7 +176,7 @@ const mergeData = computed(() => {
 /* 气泡基础样式：根元素同时携带父组件作用域属性，父级 .message-row 相关规则仍可命中 */
 .bubble {
   /* 按文本自然撑开，避免父容器把气泡压缩到最小宽度 */
-  position: relative; /* S6 快捷表情栏定位锚点 */
+  position: relative;
   width: fit-content;
   min-width: 2.5em;
   padding: 12px 14px;
@@ -554,99 +513,6 @@ const mergeData = computed(() => {
 /* @提及高亮：品牌蓝 */
 .mention-hl {
   color: var(--im-primary);
-}
-
-/* ===== S6 表情回应 ===== */
-.reaction-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-  max-width: 260px;
-}
-
-.reaction-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 8px;
-  border: 1px solid var(--im-border);
-  border-radius: 999px;
-  background: var(--im-surface);
-  font-family: inherit;
-  font-size: 0.857rem;
-  line-height: 18px;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.reaction-chip.mine {
-  background: rgba(37, 99, 235, 0.12);
-  border-color: rgba(37, 99, 235, 0.4);
-}
-
-.reaction-chip:hover {
-  background: var(--im-surface-2);
-}
-
-.reaction-count {
-  color: var(--im-text-secondary);
-  font-size: 0.786rem;
-}
-
-/* G14 已读人数：气泡下方小字（仅群主/管理员视角） */
-.read-count {
-  display: block;
-  margin-top: 4px;
-  font-size: 0.714rem;
-  color: var(--im-text-muted);
-  text-align: right;
-}
-
-/* S6 快捷表情栏：hover 气泡时右上角浮现 */
-.quick-reaction {
-  position: absolute;
-  top: -30px;
-  right: 0;
-  display: flex;
-  gap: 2px;
-  padding: 3px 6px;
-  background: var(--im-surface);
-  border: 1px solid var(--im-border);
-  border-radius: 999px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(2px);
-  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
-  z-index: 20;
-}
-
-.bubble:hover .quick-reaction {
-  opacity: 1;
-  visibility: visible;
-  transform: translateY(0);
-}
-
-.quick-reaction-btn {
-  border: none;
-  background: none;
-  font-size: 1.071rem;
-  line-height: 1;
-  padding: 3px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: transform 0.1s ease, background 0.15s ease;
-}
-
-.quick-reaction-btn:hover {
-  transform: scale(1.25);
-  background: var(--im-surface-2);
-}
-
-:global([data-theme='dark']) .quick-reaction {
-  background: var(--im-surface-2);
-  border-color: var(--im-border);
 }
 
 /* ===== 合并转发卡片（S2）：标题 + 最多三条摘要 + 条数页脚，点击查看详情 ===== */

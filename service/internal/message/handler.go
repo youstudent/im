@@ -156,65 +156,6 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 	resp.OKNoData(c)
 }
 
-// ReadCount 群消息已读人数（G14，仅群主/管理员可查，企业微信策略）。
-func (h *Handler) ReadCount(c *gin.Context) {
-	uid, ok := middleware.UIDFromContext(c)
-	if !ok {
-		resp.Fail(c, apperr.Unauthorized("未登录"))
-		return
-	}
-	convID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	msgID, _ := strconv.ParseInt(c.Param("mid"), 10, 64)
-	n, err := h.svc.ReadCount(uid, convID, msgID)
-	if err != nil {
-		resp.Fail(c, err)
-		return
-	}
-	resp.OK(c, gin.H{"count": n})
-}
-
-// SetReaction 添加/移除表情回应（S6）：body { emoji, add }；add=true 添加，false 移除（仅本人反应可移除）。
-func (h *Handler) SetReaction(c *gin.Context) {
-	uid, ok := middleware.UIDFromContext(c)
-	if !ok {
-		resp.Fail(c, apperr.Unauthorized("未登录"))
-		return
-	}
-	convID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	msgID, _ := strconv.ParseInt(c.Param("mid"), 10, 64)
-	var req struct {
-		Emoji string `json:"emoji"`
-		Add   bool   `json:"add"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		resp.Fail(c, apperr.BadRequest("请求参数错误: "+err.Error()))
-		return
-	}
-	change, err := h.svc.SetReaction(uid, convID, msgID, req.Emoji, req.Add)
-	if err != nil {
-		resp.Fail(c, err)
-		return
-	}
-	resp.OK(c, change)
-}
-
-// GetReactions 查询单条消息的表情回应列表（S6）。
-func (h *Handler) GetReactions(c *gin.Context) {
-	uid, ok := middleware.UIDFromContext(c)
-	if !ok {
-		resp.Fail(c, apperr.Unauthorized("未登录"))
-		return
-	}
-	convID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
-	msgID, _ := strconv.ParseInt(c.Param("mid"), 10, 64)
-	list, err := h.svc.GetReactions(uid, convID, msgID)
-	if err != nil {
-		resp.Fail(c, err)
-		return
-	}
-	resp.OK(c, list)
-}
-
 // ListConversations 会话列表。
 // changed_since（unix 秒，可选）：仅返回该时间之后有变化的会话（含空会话），
 // 客户端本地已有全量时用它做差量刷新，减少服务端查表量。
