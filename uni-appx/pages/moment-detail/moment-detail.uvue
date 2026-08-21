@@ -1,0 +1,515 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="nav-left" @click="goBack">
+        <view class="back-icon"></view>
+        <text class="nav-left-text">朋友圈</text>
+      </view>
+      <text class="nav-title">详情</text>
+      <view class="nav-right" @click="onMore">
+        <text class="more-dots">· · ·</text>
+      </view>
+    </view>
+
+    <scroll-view class="content" scroll-y>
+      <view class="post-block">
+        <view class="post-header">
+          <view class="avatar">
+            <text class="avatar-text">林</text>
+          </view>
+          <view class="header-info">
+            <text class="user-name">林小北</text>
+            <view class="meta-row">
+              <text class="meta-time">昨天 08:32</text>
+              <text class="meta-dot"> </text>
+              <text class="meta-device">来自 iPhone 16 Pro</text>
+            </view>
+          </view>
+        </view>
+
+        <text class="post-content">周末上山看云海，四点半起床是值得的。风景真的绝了，推荐大家有机会一定要去一次！</text>
+
+        <view class="photo-row">
+          <view
+            v-for="(item, index) in photos"
+            :key="index"
+            class="photo"
+            :class="{ 'photo-last': index === photos.length - 1 }"
+            :style="{ background: item }"
+            @click="onPhoto"
+          ></view>
+        </view>
+      </view>
+
+      <view class="interaction-block">
+        <view class="likes-row">
+          <view class="like-avatars">
+            <view class="like-avatar la-1"></view>
+            <view class="like-avatar la-2"></view>
+            <view class="like-avatar la-3"></view>
+          </view>
+          <text class="like-text">
+            <text class="heart">♥</text>
+            <text class="like-name">张三、李四、王五</text>
+            <text class="like-suffix"> 等 28 人赞了</text>
+          </text>
+        </view>
+
+        <view class="comments-list">
+          <view class="comment-item" v-for="(c, idx) in comments" :key="idx" :class="{ 'comment-item-last': idx === comments.length - 1 }">
+            <text class="comment-text">
+              <text class="comment-name">{{ c.name }}</text>
+              <text v-if="c.replyTo" class="comment-reply"> 回复 </text>
+              <text v-if="c.replyTo" class="comment-name">@{{ c.replyTo }}</text>
+              <text v-if="c.replyTo" class="comment-suffix">：</text>
+              <text v-if="!c.replyTo" class="comment-suffix">：</text>
+              <text class="comment-content">{{ c.content }}</text>
+            </text>
+          </view>
+        </view>
+      </view>
+
+      <view class="bottom-space"></view>
+    </scroll-view>
+
+    <view class="input-bar">
+      <view class="input-wrap">
+        <input
+          class="input-field"
+          v-model="commentText"
+          placeholder="写评论..."
+          placeholder-style="color:#B2B2B2;font-size:14px"
+          confirm-type="send"
+          @confirm="onSend"
+        />
+      </view>
+      <view class="emoji-btn">
+        <view class="emoji-circle"></view>
+        <view class="emoji-eye e-1"></view>
+        <view class="emoji-eye e-2"></view>
+        <view class="emoji-mouth"></view>
+      </view>
+      <text
+        class="send-btn"
+        :class="{ 'send-btn-active': commentText.length > 0 }"
+        @click="onSend"
+      >发送</text>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+
+const commentText = ref('')
+
+type CommentItem = {
+  name: string
+  replyTo?: string
+  content: string
+}
+
+const comments: CommentItem[] = [
+  { name: '张三', content: '太美了！下次带上我一起' },
+  { name: '李四', replyTo: '张三', content: '约好了，下周未走起！' },
+  { name: '王五', content: '云海真的绝了，我也去过峨眉山金顶，感觉差不多' },
+  { name: '赵六', content: '早起真的不容易，但看到日出的那一刻一切都值得' }
+]
+
+const photos: string[] = [
+  'linear-gradient(135deg, #FFB347 0%, #FF8C42 50%, #4A5568 100%)',
+  'linear-gradient(135deg, #4A5568 0%, #2D3748 50%, #FF6B35 100%)',
+  'linear-gradient(135deg, #9AE6B4 0%, #68D391 50%, #2F855A 100%)'
+]
+
+const goBack = (): void => {
+  uni.navigateBack({ delta: 1 })
+}
+
+	const onMore = (): void => {
+	  uni.showActionSheet({
+	    itemList: ['收藏', '分享', '复制', '举报'],
+	    success: (res) => {
+	      uni.showToast({ title: '已选择：' + (res.tapIndex + 1), icon: 'none' })
+	    }
+	  })
+	}
+
+const onPhoto = (): void => {
+  uni.previewImage({
+    urls: ['', '', ''],
+    current: 0
+  })
+}
+
+const onSend = (): void => {
+  if (commentText.value.trim().length === 0) {
+    uni.showToast({ title: '请输入评论内容', icon: 'none' })
+    return
+  }
+  uni.showToast({ title: '评论已发表', icon: 'success' })
+  commentText.value = ''
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  background: #F7F7F7;
+  display: flex;
+  flex-direction: column;
+}
+
+.status-bar {
+  width: 100%;
+  height: 44px;
+  background: #FFFFFF;
+  flex-shrink: 0;
+}
+
+.nav-bar {
+  width: 100%;
+  height: 44px;
+  background: #FFFFFF;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  position: relative;
+  flex-shrink: 0;
+  border-bottom: 1px solid #F0F0F0;
+}
+
+.nav-left {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 80px;
+}
+
+.back-icon {
+  width: 10px;
+  height: 10px;
+  border-left: 2px solid #333333;
+  border-bottom: 2px solid #333333;
+  transform: rotate(45deg);
+  margin-right: 4px;
+}
+
+.nav-left-text {
+  color: #333333;
+  font-size: 15px;
+}
+
+.nav-title {
+  color: #333333;
+  font-size: 17px;
+  font-weight: bold;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.nav-right {
+  width: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.more-dots {
+  color: #333333;
+  font-size: 18px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  transform: rotate(90deg);
+}
+
+.content {
+  flex: 1;
+  width: 100%;
+  background: #FFFFFF;
+}
+
+.post-block {
+  padding: 14px 16px 12px 16px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #F0F0F0;
+}
+
+.post-header {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: #FF9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.avatar-text {
+  color: #FFFFFF;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.header-info {
+  flex: 1;
+  margin-left: 10px;
+  display: flex;
+  flex-direction: column;
+  padding-top: 2px;
+}
+
+.user-name {
+  color: #576B95;
+  font-size: 15px;
+  font-weight: bold;
+  line-height: 20px;
+}
+
+.meta-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.meta-time {
+  color: #999999;
+  font-size: 12px;
+}
+
+.meta-device {
+  color: #999999;
+  font-size: 12px;
+}
+
+.post-content {
+  color: #333333;
+  font-size: 15px;
+  line-height: 22px;
+  margin-bottom: 10px;
+}
+
+.photo-row {
+  display: flex;
+  flex-direction: row;
+  margin-top: 4px;
+}
+
+.photo {
+  flex: 1;
+  height: 100px;
+  border-radius: 4px;
+  margin-right: 4px;
+}
+
+.photo-last {
+  margin-right: 0;
+}
+
+.interaction-block {
+  background: #FFFFFF;
+  margin-top: 0;
+}
+
+.likes-row {
+  background: #F2F2F2;
+  margin: 0 12px;
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.like-avatars {
+  display: flex;
+  flex-direction: row;
+  margin-right: 8px;
+  align-items: center;
+}
+
+.like-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid #FFFFFF;
+}
+
+.la-1 { background: #FF9500; margin-right: -6px; z-index: 3; }
+.la-2 { background: #07C160; margin-right: -6px; z-index: 2; }
+.la-3 { background: #007AFF; z-index: 1; }
+
+.like-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 18px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.heart {
+  color: #576B95;
+  font-size: 13px;
+  margin-right: 4px;
+}
+
+.like-name {
+  color: #576B95;
+  font-size: 13px;
+}
+
+.like-suffix {
+  color: #576B95;
+  font-size: 13px;
+}
+
+.comments-list {
+  background: #F2F2F2;
+  margin: 4px 12px 0 12px;
+  border-radius: 4px;
+  padding: 4px 10px 8px 10px;
+}
+
+.comment-item {
+  padding: 6px 0;
+  border-bottom: 0.5px solid #E5E5E5;
+}
+
+.comment-item-last {
+  border-bottom: none;
+}
+
+.comment-text {
+  color: #333333;
+  font-size: 13px;
+  line-height: 20px;
+  flex-wrap: wrap;
+}
+
+.comment-name {
+  color: #576B95;
+  font-size: 13px;
+}
+
+.comment-reply {
+  color: #333333;
+  font-size: 13px;
+}
+
+.comment-suffix {
+  color: #333333;
+  font-size: 13px;
+}
+
+.comment-content {
+  color: #333333;
+  font-size: 13px;
+}
+
+.bottom-space {
+  height: 60px;
+}
+
+.input-bar {
+  width: 100%;
+  height: 52px;
+  background: #FFFFFF;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 0 12px;
+  border-top: 1px solid #E5E5E5;
+  flex-shrink: 0;
+}
+
+.input-wrap {
+  flex: 1;
+  height: 36px;
+  background: #F2F2F2;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.input-field {
+  flex: 1;
+  width: 100%;
+  height: 36px;
+  font-size: 14px;
+  color: #333333;
+  background: transparent;
+}
+
+.emoji-btn {
+  width: 28px;
+  height: 28px;
+  margin-left: 8px;
+  margin-right: 10px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emoji-circle {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid #999999;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+}
+
+.emoji-eye {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #999999;
+  position: absolute;
+  top: 10px;
+}
+
+.e-1 { left: 8px; }
+.e-2 { right: 8px; }
+
+.emoji-mouth {
+  width: 8px;
+  height: 4px;
+  border-bottom: 1.5px solid #999999;
+  border-radius: 0 0 8px 8px;
+  position: absolute;
+  bottom: 6px;
+  left: 10px;
+}
+
+.send-btn {
+  color: #B2B2B2;
+  font-size: 14px;
+  padding: 0 6px;
+  height: 36px;
+  line-height: 36px;
+}
+
+.send-btn-active {
+  color: #07C160;
+}
+</style>

@@ -1,0 +1,230 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="back-icon" @click="goBack"></view>
+      <text class="nav-title">钱包</text>
+    </view>
+
+    <view class="content">
+      <!-- 余额卡片 -->
+      <view class="balance-card">
+        <text class="balance-label">零钱余额</text>
+        <text class="balance-amount">¥1,280.50</text>
+        <view class="balance-actions">
+          <view class="btn-primary" @click="onRecharge">
+            <text class="btn-text">充值</text>
+          </view>
+          <view class="btn-primary btn-primary-last" @click="onWithdraw">
+            <text class="btn-text">提现</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 列表卡片 -->
+      <view class="list-card">
+        <view class="list-row" @click="onDetail">
+          <view class="row-left">
+            <view class="row-badge badge-blue">明</view>
+            <text class="row-title">零钱明细</text>
+          </view>
+          <view class="row-arrow"></view>
+        </view>
+        <view class="list-row" @click="onBankCards">
+          <view class="row-left">
+            <view class="row-badge badge-orange">卡</view>
+            <text class="row-title">银行卡</text>
+          </view>
+          <view class="row-arrow"></view>
+        </view>
+        <view class="list-row list-row-last" @click="onBills">
+          <view class="row-left">
+            <view class="row-badge badge-red">账</view>
+            <text class="row-title">账单</text>
+          </view>
+          <view class="row-arrow"></view>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onRecharge = () => {
+  uni.showToast({ title: '充值', icon: 'none' })
+}
+
+const onWithdraw = () => {
+  uni.showToast({ title: '提现', icon: 'none' })
+}
+
+const onDetail = () => {
+  uni.showToast({ title: '零钱明细', icon: 'none' })
+}
+
+const onBankCards = () => {
+  uni.navigateTo({ url: '/pages/bank-cards/bank-cards' })
+}
+
+const onBills = () => {
+  uni.navigateTo({ url: '/pages/bills/bills' })
+}
+</script>
+
+<style>
+.page {
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  height: 44px;
+  background: #F7F7F7;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  background: #F7F7F7;
+  position: relative;
+}
+
+.back-icon {
+  width: 11px;
+  height: 11px;
+  border-left: 2px solid #333;
+  border-bottom: 2px solid #333;
+  transform: rotate(45deg);
+}
+
+.nav-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+  text-align: center;
+  margin-right: 20px;
+}
+
+.content {
+  padding: 0 16px;
+}
+
+.balance-card {
+  background: #FFFFFF;
+  border-radius: 8px;
+  padding: 24px 16px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.balance-label {
+  font-size: 13px;
+  color: #999;
+  margin-bottom: 12px;
+}
+
+.balance-amount {
+  font-size: 32px;
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 20px;
+}
+
+.balance-actions {
+  display: flex;
+  width: 100%;
+}
+
+.btn-primary {
+  flex: 1;
+  height: 40px;
+  background: #07C160;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+}
+
+.btn-primary-last {
+  margin-right: 0;
+}
+
+.btn-text {
+  color: #FFFFFF;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.list-card {
+  background: #FFFFFF;
+  border-radius: 8px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid #F0F0F0;
+}
+
+.list-row-last {
+  border-bottom: none;
+}
+
+.row-left {
+  display: flex;
+  align-items: center;
+}
+
+.row-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 12px;
+}
+
+.badge-blue {
+  background: #4A90E2;
+}
+
+.badge-orange {
+  background: #FF8C2A;
+}
+
+.badge-red {
+  background: #EE2C2C;
+}
+
+.row-title {
+  font-size: 15px;
+  color: #333;
+}
+
+.row-arrow {
+  width: 8px;
+  height: 8px;
+  border-top: 1.5px solid #CCC;
+  border-right: 1.5px solid #CCC;
+  transform: rotate(45deg);
+}
+</style>

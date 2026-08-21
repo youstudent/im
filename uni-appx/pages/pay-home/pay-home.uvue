@@ -1,0 +1,217 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">服务</text>
+		</view>
+
+		<view class="content">
+			<!-- 账户余额卡片 -->
+			<view class="balance-card" @click="goWallet">
+				<view class="balance-row">
+					<text class="balance-label">账户余额</text>
+					<text class="balance-amount">¥1,280.50</text>
+				</view>
+				<view class="divider"></view>
+				<view class="bank-row">
+					<text class="bank-text">银行卡 3 张</text>
+					<text class="arrow">›</text>
+				</view>
+			</view>
+
+			<view class="gap"></view>
+
+			<!-- 功能列表卡片 1 -->
+			<view class="list-card">
+				<view class="list-item" @click="goReceivePay">
+					<view class="badge" style="background:#07C160;">付</view>
+					<text class="item-text">收付款</text>
+					<text class="item-arrow">›</text>
+				</view>
+				<view class="line"></view>
+				<view class="list-item" @click="goWallet">
+					<view class="badge" style="background:#FF8C2A;">钱</view>
+					<text class="item-text">钱包</text>
+					<text class="item-arrow">›</text>
+				</view>
+				<view class="line"></view>
+				<view class="list-item" @click="goBankCards">
+					<view class="badge" style="background:#F0B400;">卡</view>
+					<text class="item-text">银行卡</text>
+					<text class="item-arrow">›</text>
+				</view>
+				<view class="line"></view>
+				<view class="list-item" @click="goBills">
+					<view class="badge" style="background:#EE2C2C;">账</view>
+					<text class="item-text">账单</text>
+					<text class="item-arrow">›</text>
+				</view>
+			</view>
+
+			<view class="gap"></view>
+
+			<!-- 功能列表卡片 2 -->
+			<view class="list-card">
+				<view class="list-item" @click="goFavorites">
+					<view class="badge" style="background:#9B59B6;">藏</view>
+					<text class="item-text">收藏</text>
+					<text class="item-arrow">›</text>
+				</view>
+				<view class="line"></view>
+				<view class="list-item" @click="goCardBag">
+					<view class="badge" style="background:#4A90E2;">券</view>
+					<text class="item-text">卡包</text>
+					<text class="item-arrow">›</text>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	const goBack = () => {
+		uni.navigateBack({ delta: 1 })
+	}
+	const goWallet = () => {
+		uni.navigateTo({ url: '/pages/wallet-balance/wallet-balance' })
+	}
+	const goReceivePay = () => {
+		uni.navigateTo({ url: '/pages/receive-pay/receive-pay' })
+	}
+	const goBankCards = () => {
+		uni.navigateTo({ url: '/pages/bank-cards/bank-cards' })
+	}
+	const goBills = () => {
+		uni.navigateTo({ url: '/pages/bills/bills' })
+	}
+	const goFavorites = () => {
+		uni.navigateTo({ url: '/pages/favorites/favorites' })
+	}
+	const goCardBag = () => {
+		uni.navigateTo({ url: '/pages/card-bag/card-bag' })
+	}
+</script>
+
+<style>
+	.page {
+		background: #F7F7F7;
+		height: 100%;
+	}
+	.status-bar {
+		height: 44px;
+		background: #FFFFFF;
+	}
+	.nav-bar {
+		display: flex;
+		align-items: center;
+		height: 44px;
+		padding: 0 16px;
+		background: #FFFFFF;
+	}
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+	}
+	.nav-title {
+		font-size: 17px;
+		font-weight: 600;
+		color: #333;
+		flex: 1;
+		text-align: center;
+		margin-right: 20px;
+	}
+
+	.content {
+		padding: 12px 12px 0 12px;
+	}
+
+	/* 账户余额卡片 */
+	.balance-card {
+		background: #FFFFFF;
+		border-radius: 8px;
+		padding: 16px;
+	}
+	.balance-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+	.balance-label {
+		font-size: 14px;
+		color: #999;
+	}
+	.balance-amount {
+		font-size: 22px;
+		font-weight: 700;
+		color: #333;
+	}
+	.divider {
+		height: 1px;
+		background: #EEE;
+		margin: 12px 0;
+	}
+	.bank-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+	}
+	.bank-text {
+		font-size: 13px;
+		color: #999;
+	}
+	.arrow {
+		font-size: 16px;
+		color: #999;
+		margin-left: 4px;
+	}
+
+	.gap {
+		height: 12px;
+	}
+
+	/* 列表卡片 */
+	.list-card {
+		background: #FFFFFF;
+		border-radius: 8px;
+		overflow: hidden;
+	}
+	.list-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		height: 48px;
+		padding: 0 16px;
+	}
+	.badge {
+		width: 24px;
+		height: 24px;
+		border-radius: 4px;
+		background: #07C160;
+		color: #FFFFFF;
+		font-size: 13px;
+		font-weight: 600;
+		text-align: center;
+		line-height: 24px;
+		margin-right: 12px;
+	}
+	.item-text {
+		flex: 1;
+		font-size: 15px;
+		color: #333;
+	}
+	.item-arrow {
+		font-size: 18px;
+		color: #CCC;
+	}
+	.line {
+		height: 1px;
+		background: #EEE;
+		margin-left: 52px;
+	}
+</style>

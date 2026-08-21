@@ -1,0 +1,123 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">多语言</text>
+		</view>
+		<scroll-view class="content" scroll-y>
+			<view class="card">
+				<view class="row" @click="selectLang('跟随系统')">
+					<text class="row-text">跟随系统</text>
+					<view v-if="lang === '跟随系统'" class="check"></view>
+				</view>
+				<view class="divider"></view>
+				<view class="row" @click="selectLang('简体中文')">
+					<text class="row-text">简体中文</text>
+					<view v-if="lang === '简体中文'" class="check"></view>
+				</view>
+				<view class="divider"></view>
+				<view class="row" @click="selectLang('繁体中文')">
+					<text class="row-text">繁体中文</text>
+					<view v-if="lang === '繁体中文'" class="check"></view>
+				</view>
+				<view class="divider"></view>
+				<view class="row" @click="selectLang('English')">
+					<text class="row-text">English</text>
+					<view v-if="lang === 'English'" class="check"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+
+const lang = ref<string>('跟随系统')
+
+const goBack = () => {
+	uni.navigateBack({ delta: 1 })
+}
+
+const selectLang = (val: string) => {
+	lang.value = val
+}
+</script>
+
+<style>
+.page {
+	flex: 1;
+	background-color: #F7F7F7;
+}
+
+.status-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+}
+
+.nav-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+	flex-direction: row;
+	align-items: center;
+	justify-content: center;
+	position: relative;
+}
+
+.back-icon {
+	position: absolute;
+	left: 16px;
+	width: 12px;
+	height: 12px;
+	border-left: 2px solid #333;
+	border-bottom: 2px solid #333;
+	transform: rotate(45deg);
+}
+
+.nav-title {
+	font-size: 17px;
+	font-weight: 600;
+	color: #000;
+}
+
+.content {
+	flex: 1;
+	padding: 8px 12px;
+}
+
+.card {
+	background-color: #FFFFFF;
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.row {
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 16px;
+	height: 52px;
+}
+
+.row-text {
+	font-size: 16px;
+	color: #333;
+	flex: 1;
+}
+
+.divider {
+	height: 1px;
+	background-color: #EEE;
+	margin-left: 16px;
+}
+
+.check {
+	width: 10px;
+	height: 5px;
+	border-right: 2px solid #07C160;
+	border-bottom: 2px solid #07C160;
+	transform: rotate(45deg);
+	margin-right: 4px;
+}
+</style>

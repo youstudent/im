@@ -1,0 +1,162 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="back-icon" @click="goBack"></view>
+      <text class="nav-title">转账</text>
+    </view>
+
+    <view class="card">
+      <view class="card-header">
+        <view class="avatar"></view>
+        <text class="transfer-to">林晚 向你转账</text>
+      </view>
+      <view class="divider"></view>
+      <view class="amount-row">
+        <text class="amount-symbol">¥</text>
+        <text class="amount-number">200.00</text>
+      </view>
+    </view>
+
+    <view class="submit-btn" @click="onConfirm">
+      <text class="submit-btn-text">确认收钱</text>
+    </view>
+
+    <view class="return-link" @click="onReturn">
+      <text class="return-link-text">退还</text>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const goBack = (): void => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onConfirm = (): void => {
+  uni.showToast({ title: '已收钱', icon: 'success' })
+}
+
+const onReturn = (): void => {
+  uni.showToast({ title: '已退还', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+  background-color: #F7F7F7;
+  height: 100%;
+}
+
+.status-bar {
+  height: 44px;
+  background-color: #F7F7F7;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  background-color: #F7F7F7;
+}
+
+.back-icon {
+  width: 11px;
+  height: 11px;
+  border-left: 2px solid #333;
+  border-bottom: 2px solid #333;
+  transform: rotate(45deg);
+  margin-right: 8px;
+}
+
+.nav-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+  text-align: center;
+  margin-right: 20px;
+}
+
+.card {
+  background-color: #FFFFFF;
+  margin: 12px 16px 0;
+  border-radius: 10px;
+  padding: 20px 16px 28px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  padding-bottom: 20px;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: #D8D8D8;
+  margin-right: 12px;
+}
+
+.transfer-to {
+  font-size: 17px;
+  font-weight: 600;
+  color: #333;
+}
+
+.divider {
+  height: 1px;
+  background-color: #EDEDED;
+  margin: 0 -16px;
+}
+
+.amount-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 28px 0 12px;
+}
+
+.amount-symbol {
+  font-size: 26px;
+  color: #999;
+  margin-right: 6px;
+  font-weight: 500;
+}
+
+.amount-number {
+  font-size: 36px;
+  font-weight: 700;
+  color: #333;
+}
+
+.submit-btn {
+  background-color: #07C160;
+  margin: 24px 16px 0;
+  height: 48px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.submit-btn-text {
+  color: #FFFFFF;
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.return-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.return-link-text {
+  font-size: 13px;
+  color: #999;
+}
+</style>

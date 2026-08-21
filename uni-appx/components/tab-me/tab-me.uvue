@@ -1,0 +1,360 @@
+<template>
+	<view class="page">
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<text class="nav-title">我</text>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<!-- 个人信息卡片 -->
+			<view class="profile-card" @click="onProfileClick">
+				<view class="profile-avatar">
+					<text class="profile-avatar-text">小</text>
+				</view>
+				<view class="profile-info">
+					<text class="profile-name">小 Work</text>
+					<text class="profile-id">微信号：xiaowork</text>
+				</view>
+				<view class="arrow"></view>
+			</view>
+
+			<!-- 菜单列表 -->
+			<view class="menu-list">
+				<view
+					class="menu-item"
+					v-for="(item, index) in menuList"
+					:key="item.key"
+					:class="{ 'has-gap': item.gap }"
+					@click="onItemClick(item)"
+				>
+					<view class="menu-icon" :class="`icon-${item.key}`">
+						<text v-if="item.key === 'favorites'" class="icon-text">★</text>
+						<text v-if="item.key === 'settings'" class="icon-text">⚙</text>
+						<view class="i1"></view>
+						<view class="i2"></view>
+					</view>
+					<text class="menu-name">{{ item.name }}</text>
+					<view class="arrow"></view>
+					<view class="gap-line"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type MenuItem = {
+		key: string
+		name: string
+		gap: boolean
+	}
+
+	const menuList = ref<MenuItem[]>([
+		{ key: 'services', name: '服务', gap: true },
+		{ key: 'favorites', name: '收藏', gap: false },
+		{ key: 'moments', name: '朋友圈', gap: false },
+		{ key: 'cards', name: '卡包', gap: false },
+		{ key: 'stickers', name: '表情', gap: true },
+		{ key: 'subscription', name: '订阅号', gap: false },
+		{ key: 'settings', name: '设置', gap: false }
+	])
+
+	const onProfileClick = () => {
+		uni.navigateTo({ url: '/pages/profile-edit/profile-edit' })
+	}
+
+	const onItemClick = (item: MenuItem) => {
+		if (item.key === 'settings') {
+			uni.navigateTo({ url: '/pages/settings/settings' })
+			return
+		}
+		if (item.key === 'moments') {
+			uni.navigateTo({ url: '/pages/moments/moments' })
+			return
+		}
+		if (item.key === 'favorites') {
+			uni.navigateTo({ url: '/pages/favorites/favorites' })
+			return
+		}
+		if (item.key === 'subscription') {
+			uni.navigateTo({ url: '/pages/subscription/subscription' })
+			return
+		}
+		if (item.key === 'services') {
+			uni.navigateTo({ url: '/pages/pay-home/pay-home' })
+			return
+		}
+		if (item.key === 'cards') {
+			uni.navigateTo({ url: '/pages/card-bag/card-bag' })
+			return
+		}
+		uni.showToast({ title: item.name, icon: 'none' })
+	}
+</script>
+
+<style scoped>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		height: 44px;
+		padding: 0 12px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	/* 个人信息卡片 */
+	.profile-card {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 18px 16px;
+		background-color: #FFFFFF;
+		margin-bottom: 8px;
+	}
+
+	.profile-avatar {
+		width: 64px;
+		height: 64px;
+		background-color: #07C160;
+		border-radius: 8px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-right: 14px;
+	}
+
+	.profile-avatar-text {
+		font-size: 28px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.profile-info {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	}
+
+	.profile-name {
+		font-size: 18px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.profile-id {
+		font-size: 13px;
+		color: #999;
+		margin-top: 6px;
+	}
+
+	/* 菜单列表 */
+	.menu-list {
+		background-color: #F5F5F5;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		height: 52px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+		box-sizing: border-box;
+	}
+
+	.menu-item.has-gap {
+		margin-bottom: 8px;
+		border-bottom: none;
+		position: relative;
+	}
+
+	.menu-item.has-gap .gap-line {
+		position: absolute;
+		bottom: -8px;
+		left: 0;
+		width: 100%;
+		height: 8px;
+		background-color: #F5F5F5;
+	}
+
+	.menu-icon {
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		margin-right: 12px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		position: relative;
+		box-sizing: border-box;
+	}
+
+	.icon-text {
+		color: #FFFFFF;
+		font-size: 16px;
+		line-height: 1;
+	}
+
+	.menu-name {
+		flex: 1;
+		font-size: 16px;
+		color: #000;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+	}
+
+	/* 服务：钱包 */
+	.icon-services {
+		background-color: #07C160;
+	}
+
+	.icon-services .i1 {
+		width: 18px;
+		height: 12px;
+		border: 2px solid #fff;
+		border-radius: 2px;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.icon-services .i2 {
+		width: 6px;
+		height: 4px;
+		background-color: #fff;
+		position: absolute;
+		top: 50%;
+		right: 5px;
+		transform: translateY(-50%);
+		border-radius: 1px;
+	}
+
+	/* 收藏：星形（用 ★ 字符） */
+	.icon-favorites {
+		background-color: #FF9500;
+	}
+
+	/* 朋友圈：相机 */
+	.icon-moments {
+		background-color: #FF9500;
+	}
+
+	.icon-moments .i1 {
+		width: 16px;
+		height: 12px;
+		border: 2px solid #fff;
+		border-radius: 2px;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.icon-moments .i2 {
+		width: 6px;
+		height: 6px;
+		border: 2px solid #fff;
+		border-radius: 50%;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	/* 卡包：卡片 */
+	.icon-cards {
+		background-color: #FF4D4D;
+	}
+
+	.icon-cards .i1 {
+		width: 18px;
+		height: 12px;
+		border: 2px solid #fff;
+		border-radius: 2px;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.icon-cards .i2 {
+		width: 18px;
+		height: 4px;
+		background-color: #fff;
+		position: absolute;
+		top: 9px;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	/* 表情：笑脸 */
+	.icon-stickers {
+		background-color: #FFCC00;
+	}
+
+	.icon-stickers .i1 {
+		width: 18px;
+		height: 18px;
+		border: 2px solid #fff;
+		border-radius: 50%;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.icon-stickers .i2 {
+		position: absolute;
+		top: 52%;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 8px;
+		height: 4px;
+		border-bottom: 2px solid #fff;
+		border-radius: 0 0 4px 4px;
+	}
+
+	/* 订阅号 */
+	.icon-subscription {
+		background-color: #007AFF;
+	}
+
+	/* 设置：齿轮（用 ⚙ 字符） */
+	.icon-settings {
+		background-color: #999999;
+	}
+</style>

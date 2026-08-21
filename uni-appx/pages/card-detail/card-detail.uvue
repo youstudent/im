@@ -1,0 +1,155 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="back-icon" @click="goBack"></view>
+      <text class="nav-title">卡券详情</text>
+    </view>
+
+    <view class="content">
+      <!-- 顶部券卡 -->
+      <view class="coupon-hero">
+        <text class="hero-name">餐饮通用券</text>
+        <text class="hero-discount">满100减20</text>
+        <text class="hero-expire">有效期至 2026-09-30</text>
+      </view>
+
+      <!-- 使用说明 -->
+      <view class="rule-card">
+        <text class="rule-title">使用说明</text>
+        <text class="rule-item">1. 本券仅限餐饮类商户使用</text>
+        <text class="rule-item">2. 不可叠加其他优惠</text>
+        <text class="rule-item rule-item-last">3. 逾期作废不补发</text>
+      </view>
+
+      <!-- 立即使用 -->
+      <view class="use-btn" @click="onUse">
+        <text class="use-btn-text">立即使用</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onUse = () => {
+  uni.showToast({ title: '立即使用', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  height: 44px;
+  background: #F7F7F7;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  background: #F7F7F7;
+  position: relative;
+}
+
+.back-icon {
+  width: 11px;
+  height: 11px;
+  border-left: 2px solid #333;
+  border-bottom: 2px solid #333;
+  transform: rotate(45deg);
+}
+
+.nav-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+  text-align: center;
+  margin-right: 20px;
+}
+
+.content {
+  padding: 0 16px;
+}
+
+.coupon-hero {
+  background: #E5454A;
+  border-radius: 8px;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  margin-top: 12px;
+}
+
+.hero-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-bottom: 8px;
+}
+
+.hero-discount {
+  font-size: 14px;
+  color: #FFFFFF;
+  opacity: 0.95;
+  margin-bottom: 8px;
+}
+
+.hero-expire {
+  font-size: 13px;
+  color: #FFFFFF;
+  opacity: 0.85;
+}
+
+.rule-card {
+  background: #FFFFFF;
+  border-radius: 8px;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  margin-top: 12px;
+}
+
+.rule-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 10px;
+}
+
+.rule-item {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.6;
+  margin-bottom: 10px;
+}
+
+.rule-item-last {
+  margin-bottom: 0;
+}
+
+.use-btn {
+  background: #07C160;
+  border-radius: 8px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.use-btn-text {
+  color: #FFFFFF;
+  font-size: 16px;
+  font-weight: 600;
+}
+</style>

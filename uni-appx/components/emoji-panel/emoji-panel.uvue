@@ -1,0 +1,177 @@
+<template>
+	<view v-if="visible" class="emoji-mask" @click="onMaskClick">
+		<view class="emoji-panel" @click.stop>
+			<view class="emoji-grid">
+				<view
+					class="emoji-item"
+					v-for="(emoji, index) in emojiList"
+					:key="index"
+					@click="onSelect(emoji, index)"
+				>
+					<text class="emoji-text">{{ emoji }}</text>
+				</view>
+			</view>
+
+			<view class="panel-footer">
+				<view class="tab-list">
+					<text class="tab active">默认表情</text>
+					<text class="tab">收藏</text>
+					<view class="tab-icon" @click="onAddEmoji">
+						<view class="plus-h"></view>
+						<view class="plus-v"></view>
+					</view>
+				</view>
+				<view class="send-btn" @click="onSend">
+					<text class="send-text">发送</text>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	const props = defineProps<{
+		visible: boolean
+	}>()
+
+	const emit = defineEmits<{
+		(e: 'select', value: string | number): void
+	}>()
+
+	const emojiList = ref<string[]>([
+		'😀', '😁', '😂', '🤣', '😊', '😍', '😘', '😎',
+		'🤔', '😴', '😭', '😡', '👍', '👎', '👌', '🙏',
+		'💪', '🎉', '❤️', '🔥', '✨', '🌟', '💡', '📱',
+		'💻', '🍔', '🍕', '☕', '🌹', '🐱', '🐶', '🌈'
+	])
+
+	const onMaskClick = () => {
+		emit('select', -1)
+	}
+
+	const onSelect = (emoji: string, index: number) => {
+		emit('select', emoji)
+	}
+
+	const onAddEmoji = () => {
+		uni.showToast({ title: '添加表情', icon: 'none' })
+	}
+
+	const onSend = () => {
+		uni.showToast({ title: '发送', icon: 'none' })
+	}
+</script>
+
+<style>
+	.emoji-mask {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: rgba(0, 0, 0, 0.5);
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-end;
+		z-index: 999;
+	}
+
+	.emoji-panel {
+		background-color: #FFFFFF;
+		padding: 12px;
+		padding-bottom: 20px;
+	}
+
+	.emoji-grid {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		padding: 0 6px;
+	}
+
+	.emoji-item {
+		width: 40px;
+		height: 40px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-bottom: 8px;
+	}
+
+	.emoji-text {
+		font-size: 24px;
+	}
+
+	.panel-footer {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		margin-top: 8px;
+		padding-top: 10px;
+		border-top: 1px solid #E5E5E5;
+	}
+
+	.tab-list {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		flex: 1;
+	}
+
+	.tab {
+		font-size: 14px;
+		color: #999;
+		margin-right: 16px;
+	}
+
+	.tab.active {
+		color: #07C160;
+	}
+
+	.tab-icon {
+		width: 24px;
+		height: 24px;
+		border: 1px solid #C8C8C8;
+		border-radius: 4px;
+		position: relative;
+	}
+
+	.plus-h,
+	.plus-v {
+		position: absolute;
+		background-color: #999;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.plus-h {
+		width: 12px;
+		height: 2px;
+	}
+
+	.plus-v {
+		width: 2px;
+		height: 12px;
+	}
+
+	.send-btn {
+		width: 70px;
+		height: 36px;
+		background-color: #07C160;
+		border-radius: 6px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.send-text {
+		font-size: 15px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+</style>

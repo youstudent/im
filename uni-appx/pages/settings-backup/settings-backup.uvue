@@ -1,0 +1,148 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">聊天记录迁移与备份</text>
+		</view>
+		<scroll-view class="content" scroll-y>
+			<text class="desc">可将聊天记录迁移到另一台设备，或备份到电脑微信，避免数据丢失。</text>
+
+			<view class="card">
+				<view class="row" @click="onTap('迁移到另一台设备')">
+					<view class="icon-box" style="background-color: #07C160;">
+						<text class="icon-char">迁</text>
+					</view>
+					<text class="row-text">迁移到另一台设备</text>
+					<view class="arrow"></view>
+				</view>
+				<view class="divider"></view>
+				<view class="row" @click="onTap('备份到电脑')">
+					<view class="icon-box" style="background-color: #2C7BE5;">
+						<text class="icon-char">备</text>
+					</view>
+					<text class="row-text">备份到电脑</text>
+					<view class="arrow"></view>
+				</view>
+				<view class="divider"></view>
+				<view class="row" @click="onTap('恢复聊天记录')">
+					<view class="icon-box" style="background-color: #F39C12;">
+						<text class="icon-char">恢</text>
+					</view>
+					<text class="row-text">恢复聊天记录</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+
+const goBack = () => {
+	uni.navigateBack({ delta: 1 })
+}
+
+const onTap = (name: string) => {
+	uni.showToast({ title: name, icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+	flex: 1;
+	background-color: #F7F7F7;
+}
+
+.status-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+}
+
+.nav-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+	flex-direction: row;
+	align-items: center;
+	justify-content: center;
+	position: relative;
+}
+
+.back-icon {
+	position: absolute;
+	left: 16px;
+	width: 12px;
+	height: 12px;
+	border-left: 2px solid #333;
+	border-bottom: 2px solid #333;
+	transform: rotate(45deg);
+}
+
+.nav-title {
+	font-size: 17px;
+	font-weight: 600;
+	color: #000;
+}
+
+.content {
+	flex: 1;
+	padding: 0;
+}
+
+.desc {
+	font-size: 13px;
+	color: #999;
+	line-height: 20px;
+	padding: 12px 16px 16px 16px;
+}
+
+.card {
+	background-color: #FFFFFF;
+	border-radius: 8px;
+	margin: 0 12px;
+	overflow: hidden;
+}
+
+.row {
+	flex-direction: row;
+	align-items: center;
+	padding: 0 16px;
+	height: 60px;
+}
+
+.icon-box {
+	width: 32px;
+	height: 32px;
+	border-radius: 6px;
+	align-items: center;
+	justify-content: center;
+	margin-right: 12px;
+}
+
+.icon-char {
+	color: #FFFFFF;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.row-text {
+	flex: 1;
+	font-size: 16px;
+	color: #333;
+}
+
+.arrow {
+	width: 8px;
+	height: 8px;
+	border-right: 1.5px solid #C8C8C8;
+	border-top: 1.5px solid #C8C8C8;
+	transform: rotate(45deg);
+}
+
+.divider {
+	height: 1px;
+	background-color: #EEE;
+	margin-left: 60px;
+}
+</style>

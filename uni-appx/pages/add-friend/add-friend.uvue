@@ -1,0 +1,282 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="back-icon" @click="goBack"></view>
+      <text class="nav-title">添加好友</text>
+      <view class="nav-right"></view>
+    </view>
+    <view class="search-bar">
+      <text class="search-placeholder">微信号/手机号</text>
+      <view class="search-btn" @click="onSearch">
+        <text class="search-btn-text">搜索</text>
+      </view>
+    </view>
+    <view class="result-row">
+      <view class="avatar"></view>
+      <view class="user-info">
+        <text class="user-name">林晚</text>
+        <text class="user-id">微信号：lin_wan</text>
+      </view>
+      <view class="add-btn" @click="onAdd">
+        <text class="add-btn-text">添加到通讯录</text>
+      </view>
+    </view>
+    <view class="divider"></view>
+    <view class="tip">
+      <text class="tip-text">可通过微信号、手机号或扫二维码添加朋友</text>
+    </view>
+    <view class="feature-list">
+      <view class="feature-row" @click="onFeature('雷达加朋友')">
+        <view class="feature-icon radar">
+          <view class="icon-shape"></view>
+        </view>
+        <text class="feature-name">雷达加朋友</text>
+        <text class="arrow">›</text>
+      </view>
+      <view class="feature-row" @click="onFeature('面对面建群')">
+        <view class="feature-icon group">
+          <view class="icon-shape group-shape"></view>
+        </view>
+        <text class="feature-name">面对面建群</text>
+        <text class="arrow">›</text>
+      </view>
+      <view class="feature-row" @click="onScan">
+        <view class="feature-icon scan">
+          <view class="icon-shape"></view>
+        </view>
+        <text class="feature-name">扫一扫</text>
+        <text class="arrow">›</text>
+      </view>
+      <view class="feature-row" @click="onFeature('手机联系人')">
+        <view class="feature-icon contacts">
+          <view class="icon-shape"></view>
+        </view>
+        <text class="feature-name">手机联系人</text>
+        <text class="arrow">›</text>
+      </view>
+      <view class="feature-row" @click="onFeature('公众号')">
+        <view class="feature-icon official">
+          <view class="icon-shape"></view>
+        </view>
+        <text class="feature-name">公众号</text>
+        <text class="arrow">›</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onSearch = () => {
+  uni.showToast({ title: '搜索用户', icon: 'none' })
+}
+
+const onAdd = () => {
+  uni.showToast({ title: '已发送添加请求', icon: 'success' })
+}
+
+const onScan = () => {
+  uni.navigateTo({ url: '/pages/scan/scan' })
+}
+
+const onFeature = (name: string) => {
+  uni.showToast({ title: name, icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  width: 100%;
+  height: 44px;
+  background: #FFFFFF;
+}
+
+.nav-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  background: #FFFFFF;
+}
+
+.back-icon {
+  width: 12px;
+  height: 12px;
+  border-left: 2px solid #000;
+  border-bottom: 2px solid #000;
+  transform: rotate(45deg);
+  margin-right: 8px;
+}
+
+.nav-title {
+  flex: 1;
+  text-align: center;
+  color: #000;
+  font-size: 17px;
+  font-weight: 600;
+  margin-right: 20px;
+}
+
+.nav-right {
+  width: 20px;
+  height: 20px;
+}
+
+.search-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 52px;
+  padding: 0 16px;
+  background: #FFFFFF;
+}
+
+.search-placeholder {
+  color: #999;
+  font-size: 14px;
+  flex: 1;
+}
+
+.search-btn {
+  background: #07C160;
+  border-radius: 4px;
+  padding: 6px 14px;
+}
+
+.search-btn-text {
+  color: #FFFFFF;
+  font-size: 14px;
+}
+
+.result-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 12px 16px;
+  background: #FFFFFF;
+}
+
+.avatar {
+  width: 44px;
+  height: 44px;
+  background: #D8D8D8;
+  border-radius: 50%;
+  margin-right: 12px;
+}
+
+.user-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.user-name {
+  color: #000;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.user-id {
+  color: #999;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.add-btn {
+  background: #07C160;
+  border-radius: 4px;
+  padding: 6px 12px;
+}
+
+.add-btn-text {
+  color: #FFFFFF;
+  font-size: 13px;
+}
+
+.divider {
+  height: 1px;
+  background: #EEE;
+}
+
+.tip {
+  padding: 16px;
+}
+
+.tip-text {
+  color: #B2B2B2;
+  font-size: 13px;
+  text-align: center;
+}
+
+.feature-list {
+  background: #FFFFFF;
+  margin-top: 8px;
+}
+
+.feature-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  height: 50px;
+  padding: 0 16px;
+  border-bottom: 1px solid #EEE;
+}
+
+.feature-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  margin-right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.radar { background: #07C160; }
+.group { background: #FA9D3B; }
+.scan { background: #4A90E2; }
+.contacts { background: #EE2C2C; }
+.official { background: #9B59B6; }
+
+.icon-shape {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid #FFFFFF;
+  border-radius: 50%;
+}
+
+.group-shape {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: none;
+  background: #FFFFFF;
+}
+
+.feature-name {
+  flex: 1;
+  color: #333;
+  font-size: 15px;
+}
+
+.arrow {
+  color: #C0C0C0;
+  font-size: 20px;
+}
+</style>

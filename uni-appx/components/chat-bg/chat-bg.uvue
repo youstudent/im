@@ -1,0 +1,272 @@
+<template>
+	<view v-if="visible" class="chat-bg-mask" @click="onMaskClick">
+		<view class="chat-bg-panel" @click.stop>
+			<view class="panel-header">
+				<text class="panel-title">聊天背景</text>
+				<view class="close-btn" @click="onClose">
+					<view class="close-line"></view>
+					<view class="close-line rotate"></view>
+				</view>
+			</view>
+
+			<view class="preview-wrap" :style="{ backgroundColor: previewBg }">
+				<view class="preview-bubble preview-white">
+					<text class="preview-text">这是聊天背景预览效果</text>
+				</view>
+				<view class="preview-bubble preview-green">
+					<text class="preview-text">喜欢这个背景</text>
+				</view>
+			</view>
+
+			<text class="section-title">选择背景图</text>
+			<scroll-view class="bg-scroll" scroll-x>
+				<view class="bg-list">
+					<view
+						class="bg-thumb"
+						v-for="(bg, index) in bgList"
+						:key="index"
+						:style="{ background: bg.style }"
+						:class="{ active: selectedIndex === index }"
+						@click="onSelectBg(index, bg)"
+					></view>
+				</view>
+			</scroll-view>
+
+			<view class="menu-list">
+				<view class="menu-item" @click="onChooseFromAlbum">
+					<text class="menu-text">从手机相册选择</text>
+					<view class="arrow"></view>
+				</view>
+				<view class="menu-item menu-item-last" @click="onTakePhoto">
+					<text class="menu-text">拍一张</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+
+			<view class="switch-row">
+				<text class="switch-label">将背景应用到所有聊天场景</text>
+				<switch :checked="applyAll" color="#07C160" @change="applyAll = !applyAll" />
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	const props = defineProps<{
+		visible: boolean
+	}>()
+
+	const emit = defineEmits<{
+		(e: 'close'): void
+	}>()
+
+	const previewBg = ref<string>('#E8F5E9')
+	const selectedIndex = ref<number>(0)
+	const applyAll = ref<boolean>(true)
+
+	type BgItem = {
+		style: string
+		color: string
+	}
+
+	const bgList = ref<BgItem[]>([
+		{ style: 'linear-gradient(to bottom right, #E8F5E9, #C8E6C9)', color: '#E8F5E9' },
+		{ style: 'linear-gradient(to bottom right, #FFF3E0, #FFE0B2)', color: '#FFF3E0' },
+		{ style: 'linear-gradient(to bottom right, #E3F2FD, #BBDEFB)', color: '#E3F2FD' },
+		{ style: 'linear-gradient(to bottom right, #F3E5F5, #E1BEE7)', color: '#F3E5F5' },
+		{ style: 'linear-gradient(to bottom right, #ECEFF1, #CFD8DC)', color: '#ECEFF1' },
+		{ style: '#FFFFFF', color: '#FFFFFF' },
+		{ style: '#F0F0F0', color: '#F0F0F0' },
+		{ style: '#333333', color: '#333333' }
+	])
+
+	const onMaskClick = () => {
+		emit('close')
+	}
+
+	const onClose = () => {
+		emit('close')
+	}
+
+	const onSelectBg = (index: number, bg: BgItem) => {
+		selectedIndex.value = index
+		previewBg.value = bg.color
+	}
+
+	const onChooseFromAlbum = () => {
+		uni.showToast({ title: '从相册选择', icon: 'none' })
+	}
+
+	const onTakePhoto = () => {
+		uni.showToast({ title: '拍一张', icon: 'none' })
+	}
+</script>
+
+<style>
+	.chat-bg-mask {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: rgba(0, 0, 0, 0.5);
+		display: flex;
+		flex-direction: column;
+		justify-content: flex-end;
+		z-index: 999;
+	}
+
+	.chat-bg-panel {
+		background-color: #FFFFFF;
+		border-radius: 12px 12px 0 0;
+		padding: 16px;
+		padding-bottom: 30px;
+	}
+
+	.panel-header {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 16px;
+	}
+
+	.panel-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.close-btn {
+		width: 24px;
+		height: 24px;
+		position: relative;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.close-line {
+		position: absolute;
+		width: 14px;
+		height: 2px;
+		background-color: #999;
+		transform: rotate(45deg);
+	}
+
+	.close-line.rotate {
+		transform: rotate(-45deg);
+	}
+
+	.preview-wrap {
+		width: 100%;
+		height: 160px;
+		border-radius: 8px;
+		padding: 16px;
+		box-sizing: border-box;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		margin-bottom: 16px;
+	}
+
+	.preview-bubble {
+		padding: 10px 12px;
+		border-radius: 6px;
+		margin-bottom: 8px;
+		max-width: 280px;
+	}
+
+	.preview-white {
+		background-color: #FFFFFF;
+	}
+
+	.preview-green {
+		background-color: #95EC69;
+	}
+
+	.preview-text {
+		font-size: 14px;
+		color: #000;
+	}
+
+	.section-title {
+		font-size: 15px;
+		color: #333;
+		margin-bottom: 10px;
+	}
+
+	.bg-scroll {
+		width: 100%;
+		height: 70px;
+		margin-bottom: 16px;
+	}
+
+	.bg-list {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding-right: 16px;
+	}
+
+	.bg-thumb {
+		width: 56px;
+		height: 56px;
+		border-radius: 8px;
+		margin-right: 10px;
+		border: 2px solid transparent;
+		flex-shrink: 0;
+	}
+
+	.bg-thumb.active {
+		border-color: #07C160;
+	}
+
+	.menu-list {
+		background-color: #FFFFFF;
+		border-top: 1px solid #E5E5E5;
+		border-bottom: 1px solid #E5E5E5;
+		margin-bottom: 16px;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.menu-item-last {
+		border-bottom: none;
+	}
+
+	.menu-text {
+		font-size: 16px;
+		color: #000;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+	}
+
+	.switch-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+	}
+
+	.switch-label {
+		font-size: 16px;
+		color: #000;
+	}
+</style>

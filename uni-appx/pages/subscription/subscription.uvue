@@ -1,0 +1,300 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">订阅号</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<scroll-view class="content" scroll-y>
+			<view class="channels-entry" @click="onChannels">
+				<view class="channels-icon">视</view>
+				<text class="channels-name">视频号</text>
+				<view class="channels-arrow"></view>
+			</view>
+
+			<text class="section-title">订阅号消息</text>
+
+			<view class="sub-list">
+				<view
+					class="sub-item"
+					v-for="item in subList"
+					:key="item.id"
+					@click="onItemClick(item)"
+				>
+					<view class="avatar" :style="{ backgroundColor: item.avatarColor }">
+						<text class="avatar-text">{{ item.avatarText }}</text>
+					</view>
+
+					<view class="sub-info">
+						<view class="info-top">
+							<text class="sub-name">{{ item.name }}</text>
+							<text class="sub-time">{{ item.time }}</text>
+						</view>
+						<text class="article-title">{{ item.articleTitle }}</text>
+						<view class="info-bottom">
+							<text class="article-desc">{{ item.articleDesc }}</text>
+							<view v-if="item.hasThumb" class="article-thumb"></view>
+						</view>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type SubItem = {
+		id: string
+		name: string
+		avatarText: string
+		avatarColor: string
+		articleTitle: string
+		articleDesc: string
+		time: string
+		hasThumb: boolean
+	}
+
+	const subList = ref<SubItem[]>([
+		{
+			id: '1',
+			name: '36氪',
+			avatarText: '36',
+			avatarColor: '#007AFF',
+			articleTitle: '2026 上半年行业融资盘点',
+			articleDesc: '一级市场回暖明显，AI 赛道领跑',
+			time: '08-19',
+			hasThumb: false
+		},
+		{
+			id: '2',
+			name: '极客公园',
+			avatarText: '极',
+			avatarColor: '#07C160',
+			articleTitle: 'AI 编程助手实测：效率到底提升多少？',
+			articleDesc: '我们实测了三款主流工具的真实表现',
+			time: '08-18',
+			hasThumb: true
+		},
+		{
+			id: '3',
+			name: '少数派',
+			avatarText: '少',
+			avatarColor: '#FF9500',
+			articleTitle: '效率工具精选',
+			articleDesc: '本月最值得安装的 5 款生产力应用',
+			time: '08-17',
+			hasThumb: false
+		},
+		{
+			id: '4',
+			name: '字节范儿',
+			avatarText: '字',
+			avatarColor: '#FF4D6A',
+			articleTitle: '内部技术分享',
+			articleDesc: '一次微服务拆分失败的复盘与教训',
+			time: '08-15',
+			hasThumb: false
+		}
+	])
+
+	const goBack = () => {
+		uni.navigateBack({ animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+	const onChannels = () => {
+		uni.navigateTo({ url: '/pages/channels/channels' })
+	}
+
+	const onItemClick = (item: SubItem) => {
+		uni.showToast({ title: item.name, icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F7F7F7;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+
+	.content {
+		flex: 1;
+		background-color: #F7F7F7;
+	}
+
+	.section-title {
+		padding: 12px 16px;
+		font-size: 13px;
+		color: #999;
+	}
+
+	/* 视频号入口 */
+	.channels-entry {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		background-color: #FFFFFF;
+		margin: 10px 12px 0;
+		border-radius: 8px;
+		padding: 12px;
+	}
+
+	.channels-icon {
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		background-color: #07C160;
+		color: #FFFFFF;
+		font-size: 14px;
+		font-weight: 600;
+		text-align: center;
+		line-height: 28px;
+		margin-right: 12px;
+	}
+
+	.channels-name {
+		flex: 1;
+		font-size: 16px;
+		color: #000;
+	}
+
+	.channels-arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+	}
+
+	.sub-list {
+		background-color: #FFFFFF;
+	}
+
+	.sub-item {
+		display: flex;
+		flex-direction: row;
+		align-items: flex-start;
+		padding: 12px 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.avatar {
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-right: 12px;
+		margin-top: 2px;
+	}
+
+	.avatar-text {
+		font-size: 15px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.sub-info {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.info-top {
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.sub-name {
+		font-size: 16px;
+		color: #333;
+		font-weight: 500;
+	}
+
+	.sub-time {
+		font-size: 12px;
+		color: #B2B2B2;
+	}
+
+	.article-title {
+		font-size: 15px;
+		color: #000;
+		font-weight: 500;
+		margin-top: 4px;
+		lines: 2;
+		text-overflow: ellipsis;
+		overflow: hidden;
+	}
+
+	.info-bottom {
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 4px;
+	}
+
+	.article-desc {
+		flex: 1;
+		font-size: 13px;
+		color: #999;
+		lines: 1;
+		text-overflow: ellipsis;
+		overflow: hidden;
+		margin-right: 8px;
+	}
+
+	.article-thumb {
+		width: 56px;
+		height: 42px;
+		background-color: #E5E5E5;
+		border-radius: 4px;
+		flex-shrink: 0;
+	}
+</style>

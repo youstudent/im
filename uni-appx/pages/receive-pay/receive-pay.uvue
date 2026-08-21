@@ -1,0 +1,241 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">收付款</text>
+		</view>
+
+		<!-- Tab 切换 -->
+		<view class="tab-bar">
+			<view class="tab-item" :class="{ active: activeTab === 'pay' }" @click="switchTab('pay')">
+				<text class="tab-text" :class="{ active: activeTab === 'pay' }">付款</text>
+				<view class="tab-line" v-if="activeTab === 'pay'"></view>
+			</view>
+			<view class="tab-item" :class="{ active: activeTab === 'collect' }" @click="switchTab('collect')">
+				<text class="tab-text" :class="{ active: activeTab === 'collect' }">收款</text>
+				<view class="tab-line" v-if="activeTab === 'collect'"></view>
+			</view>
+		</view>
+
+		<view class="content">
+			<!-- 码卡片 -->
+			<view class="qr-card">
+				<view class="qr-box">
+					<view class="qr-placeholder"></view>
+				</view>
+				<text class="qr-tip">{{ activeTab === 'pay' ? '向商家展示付款码' : '向对方展示收款码' }}</text>
+				<view class="card-divider"></view>
+				<view class="pay-method" @click="switchPayMethod">
+					<text class="pay-method-text">付款方式  零钱</text>
+					<text class="pay-method-arrow">›</text>
+				</view>
+			</view>
+
+			<view class="gap"></view>
+
+			<!-- 功能列表 -->
+			<view class="list-card">
+				<view class="list-item" @click="goTransfer">
+					<view class="badge" style="background:#07C160;">转</view>
+					<text class="item-text">转账</text>
+					<text class="item-arrow">›</text>
+				</view>
+				<view class="line"></view>
+				<view class="list-item" @click="goRedPacket">
+					<view class="badge" style="background:#EE2C2C;">包</view>
+					<text class="item-text">红包</text>
+					<text class="item-arrow">›</text>
+				</view>
+				<view class="line"></view>
+				<view class="list-item" @click="goScan">
+					<view class="badge" style="background:#4A90E2;">扫</view>
+					<text class="item-text">扫一扫</text>
+					<text class="item-arrow">›</text>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+	const activeTab = ref<string>('pay')
+
+	const goBack = () => {
+		uni.navigateBack({ delta: 1 })
+	}
+	const switchTab = (tab: string) => {
+		activeTab.value = tab
+	}
+	const switchPayMethod = () => {
+		uni.showToast({ title: '切换付款方式', icon: 'none' })
+	}
+	const goTransfer = () => {
+		uni.navigateTo({ url: '/pages/transfer/transfer' })
+	}
+	const goRedPacket = () => {
+		uni.navigateTo({ url: '/pages/red-packet-send/red-packet-send' })
+	}
+	const goScan = () => {
+		uni.navigateTo({ url: '/pages/scan/scan' })
+	}
+</script>
+
+<style>
+	.page {
+		background: #F7F7F7;
+		height: 100%;
+	}
+	.status-bar {
+		height: 44px;
+		background: #FFFFFF;
+	}
+	.nav-bar {
+		display: flex;
+		align-items: center;
+		height: 44px;
+		padding: 0 16px;
+		background: #FFFFFF;
+	}
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+	}
+	.nav-title {
+		font-size: 17px;
+		font-weight: 600;
+		color: #333;
+		flex: 1;
+		text-align: center;
+		margin-right: 20px;
+	}
+
+	/* Tab */
+	.tab-bar {
+		display: flex;
+		flex-direction: row;
+		background: #FFFFFF;
+		border-bottom: 1px solid #EEE;
+	}
+	.tab-item {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 44px;
+		position: relative;
+	}
+	.tab-text {
+		font-size: 16px;
+		color: #999;
+	}
+	.tab-text.active {
+		color: #333;
+		font-weight: 600;
+	}
+	.tab-line {
+		position: absolute;
+		bottom: 0;
+		width: 30px;
+		height: 3px;
+		background: #07C160;
+		border-radius: 2px;
+	}
+
+	.content {
+		padding: 12px 12px 0 12px;
+	}
+
+	/* 码卡片 */
+	.qr-card {
+		background: #FFFFFF;
+		border-radius: 8px;
+		padding: 20px 16px 16px 16px;
+	}
+	.qr-box {
+		display: flex;
+		justify-content: center;
+		padding: 10px 0;
+	}
+	.qr-placeholder {
+		width: 200px;
+		height: 200px;
+		background: #E5E5E5;
+		border-radius: 4px;
+	}
+	.qr-tip {
+		text-align: center;
+		font-size: 13px;
+		color: #999;
+		margin-top: 12px;
+	}
+	.card-divider {
+		height: 1px;
+		background: #EEE;
+		margin: 16px 0 12px 0;
+	}
+	.pay-method {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+	}
+	.pay-method-text {
+		font-size: 13px;
+		color: #999;
+	}
+	.pay-method-arrow {
+		font-size: 16px;
+		color: #999;
+		margin-left: 4px;
+	}
+
+	.gap {
+		height: 12px;
+	}
+
+	/* 列表卡片 */
+	.list-card {
+		background: #FFFFFF;
+		border-radius: 8px;
+		overflow: hidden;
+	}
+	.list-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		height: 48px;
+		padding: 0 16px;
+	}
+	.badge {
+		width: 24px;
+		height: 24px;
+		border-radius: 4px;
+		background: #07C160;
+		color: #FFFFFF;
+		font-size: 13px;
+		font-weight: 600;
+		text-align: center;
+		line-height: 24px;
+		margin-right: 12px;
+	}
+	.item-text {
+		flex: 1;
+		font-size: 15px;
+		color: #333;
+	}
+	.item-arrow {
+		font-size: 18px;
+		color: #CCC;
+	}
+	.line {
+		height: 1px;
+		background: #EEE;
+		margin-left: 52px;
+	}
+</style>

@@ -1,0 +1,225 @@
+<template>
+	<view class="chat-input-bar">
+		<view class="voice-btn" @click="onVoice">
+			<view class="voice-icon">
+				<view class="i2"></view>
+			</view>
+		</view>
+		<input
+			class="message-input"
+			type="text"
+			v-model="inputText"
+			:placeholder="placeholder"
+			placeholder-class="input-placeholder"
+			confirm-type="send"
+			@confirm="onSend"
+		/>
+		<view v-if="showAt" class="at-btn" @click="onAt">
+			<text class="at-text">@</text>
+		</view>
+		<view class="emoji-btn" @click="onEmoji">
+			<view class="emoji-icon">
+				<view class="i1"></view>
+				<view class="i2"></view>
+			</view>
+		</view>
+		<view class="more-btn" @click="onMore">
+			<view class="round-plus-icon">
+				<view class="i1"></view>
+				<view class="i2"></view>
+			</view>
+		</view>
+
+		<emoji-panel :visible="showEmoji" @select="onEmojiSelect"></emoji-panel>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	const props = defineProps<{
+		placeholder: string
+		showAt: boolean
+	}>()
+
+	const emit = defineEmits<{
+		(e: 'send', text: string): void
+		(e: 'voice'): void
+		(e: 'more'): void
+		(e: 'at'): void
+	}>()
+
+	const inputText = ref<string>('')
+	const showEmoji = ref<boolean>(false)
+
+	const onSend = () => {
+		const text = inputText.value.trim()
+		if (text.length === 0) return
+		emit('send', text)
+		inputText.value = ''
+	}
+
+	const onVoice = () => {
+		emit('voice')
+	}
+
+	const onAt = () => {
+		emit('at')
+	}
+
+	const onEmoji = () => {
+		showEmoji.value = !showEmoji.value
+	}
+
+	const onEmojiSelect = (val: string | number) => {
+		if (val === -1) {
+			showEmoji.value = false
+			return
+		}
+		inputText.value = inputText.value + val.toString()
+		showEmoji.value = false
+	}
+
+	const onMore = () => {
+		emit('more')
+	}
+</script>
+
+<style>
+	.chat-input-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 8px 10px;
+		background-color: #F7F7F7;
+		border-top: 1px solid #E5E5E5;
+	}
+
+	.voice-btn {
+		width: 32px;
+		height: 32px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-right: 6px;
+	}
+
+	.voice-icon {
+		width: 10px;
+		height: 16px;
+		border: 2px solid #333;
+		border-radius: 5px;
+		position: relative;
+	}
+
+	.voice-icon .i2 {
+		position: absolute;
+		bottom: -4px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 6px;
+		height: 4px;
+		border: 2px solid #333;
+		border-top: none;
+		border-radius: 0 0 4px 4px;
+	}
+
+	.message-input {
+		flex: 1;
+		height: 38px;
+		background-color: #FFFFFF;
+		border-radius: 4px;
+		padding: 0 10px;
+		font-size: 15px;
+		color: #000;
+		margin: 0 6px;
+	}
+
+	.input-placeholder {
+		color: #C8C8C8;
+		font-size: 15px;
+	}
+
+	.at-btn {
+		width: 32px;
+		height: 32px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-left: 4px;
+	}
+
+	.at-text {
+		font-size: 20px;
+		font-weight: 600;
+		color: #333;
+		line-height: 1;
+	}
+
+	.emoji-btn,
+	.more-btn {
+		width: 32px;
+		height: 32px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-left: 4px;
+	}
+
+	.emoji-icon {
+		width: 24px;
+		height: 24px;
+		border: 2px solid #333;
+		border-radius: 50%;
+		position: relative;
+	}
+
+	.emoji-icon .i1 {
+		position: absolute;
+		top: 6px;
+		left: 4px;
+		width: 3px;
+		height: 3px;
+		background-color: #333;
+		border-radius: 50%;
+		box-shadow: 10px 0 0 #333;
+	}
+
+	.emoji-icon .i2 {
+		position: absolute;
+		bottom: 5px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 10px;
+		height: 5px;
+		border-bottom: 2px solid #333;
+		border-radius: 0 0 5px 5px;
+	}
+
+	.round-plus-icon {
+		width: 24px;
+		height: 24px;
+		border: 2px solid #333;
+		border-radius: 50%;
+		position: relative;
+	}
+
+	.round-plus-icon .i1,
+	.round-plus-icon .i2 {
+		position: absolute;
+		background-color: #333;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.round-plus-icon .i1 {
+		width: 12px;
+		height: 2px;
+	}
+
+	.round-plus-icon .i2 {
+		width: 2px;
+		height: 12px;
+	}
+</style>

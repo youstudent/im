@@ -1,0 +1,380 @@
+<template>
+	<view class="page">
+		<!-- 自定义导航栏 -->
+		<view class="nav-bar">
+			<view class="back-arrow" @click="goBack"></view>
+			<text class="nav-title">朋友圈</text>
+			<view class="camera-icon" @click="onCamera">
+				<view class="i1"></view>
+				<view class="i2"></view>
+			</view>
+		</view>
+
+		<scroll-view class="scroll" scroll-y>
+			<!-- 封面区 -->
+			<view class="cover" @click="goMyMoments">
+				<view class="cover-bg"></view>
+				<view class="my-avatar">
+					<text class="my-avatar-text">小</text>
+				</view>
+			</view>
+
+			<!-- 动态列表 -->
+			<view class="moment-list">
+				<view class="moment-item" v-for="item in moments" :key="item.id" @click="onItemTap(item)">
+					<view class="avatar" :style="{ backgroundColor: item.avatarColor }" @click.stop="goAlbum(item)">
+						<text class="avatar-text">{{ item.avatarText }}</text>
+					</view>
+					<view class="moment-body">
+						<text class="nickname">{{ item.name }}</text>
+						<text class="moment-text">{{ item.content }}</text>
+						<view class="image-grid" v-if="item.images.length > 0">
+							<view
+								class="grid-image"
+								v-for="(img, idx) in item.images"
+								:key="idx"
+								:style="{ backgroundColor: img }"
+							></view>
+						</view>
+						<view class="moment-meta">
+							<text class="time">{{ item.time }}</text>
+							<view class="comment-btn" @click.stop="onComment(item)">
+								<view class="comment-icon">
+									<view class="i1"></view>
+								</view>
+							</view>
+						</view>
+						<view class="like-wrap" v-if="item.likes">
+							<view class="heart-icon">
+								<view class="i1"></view>
+								<view class="i2"></view>
+							</view>
+							<text class="like-names">{{ item.likes }}</text>
+						</view>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type MomentItem = {
+		id: number
+		name: string
+		avatarText: string
+		avatarColor: string
+		content: string
+		images: string[]
+		time: string
+		likes: string
+	}
+
+	const moments = ref<MomentItem[]>([
+		{
+			id: 1,
+			name: '林晚',
+			avatarText: '林',
+			avatarColor: '#F5A623',
+			content: '周末爬山太开心了，山顶风景美爆！下次约起',
+			images: ['#E0E0E0', '#C5D8E8', '#E8D8C5'],
+			time: '2 小时前',
+			likes: ''
+		},
+		{
+			id: 2,
+			name: '张可',
+			avatarText: '张',
+			avatarColor: '#4A90E2',
+			content: '新入手的咖啡机，拉花成功！',
+			images: ['#D0C4A8'],
+			time: '昨天',
+			likes: '林晚、赵敏'
+		},
+		{
+			id: 3,
+			name: '李娜',
+			avatarText: '李',
+			avatarColor: '#FF6B9D',
+			content: '',
+			images: [],
+			time: '',
+			likes: ''
+		}
+	])
+
+	const goBack = () => {
+		uni.navigateBack({})
+	}
+
+	const onCamera = () => {
+		uni.navigateTo({ url: '/pages/post-moment/post-moment' })
+	}
+
+	const onComment = (item: MomentItem) => {
+		uni.showToast({ title: `评论 ${item.name}`, icon: 'none' })
+	}
+
+	const goMyMoments = () => {
+		uni.navigateTo({ url: '/pages/moments-my/moments-my' })
+	}
+
+	const onItemTap = (item: MomentItem) => {
+		uni.navigateTo({ url: '/pages/moment-detail/moment-detail' })
+	}
+
+	const goAlbum = (item: MomentItem) => {
+		uni.navigateTo({ url: '/pages/moments-album/moments-album' })
+	}
+</script>
+
+<style scoped>
+	.page {
+		flex: 1;
+		background-color: #fff;
+	}
+
+	.nav-bar {
+		height: 44px;
+		background-color: #fff;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-arrow {
+		position: absolute;
+		left: 12px;
+		top: 50%;
+		transform: translateY(-50%) rotate(45deg);
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.camera-icon {
+		position: absolute;
+		right: 16px;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 22px;
+		height: 18px;
+		border: 2px solid #333;
+		border-radius: 3px;
+		box-sizing: border-box;
+	}
+
+	.camera-icon .i1 {
+		position: absolute;
+		top: -5px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 8px;
+		height: 3px;
+		background-color: #333;
+		border-radius: 1px 1px 0 0;
+	}
+
+	.camera-icon .i2 {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 6px;
+		height: 6px;
+		border: 2px solid #333;
+		border-radius: 50%;
+	}
+
+	.scroll {
+		flex: 1;
+	}
+
+	/* 封面区 */
+	.cover {
+		position: relative;
+		height: 220px;
+		background-color: #A8D8B9;
+	}
+
+	.cover-bg {
+		width: 100%;
+		height: 100%;
+		background: linear-gradient(180deg, #9FD3B4 0%, #B8E2C8 100%);
+	}
+
+	.my-avatar {
+		position: absolute;
+		right: 16px;
+		bottom: -20px;
+		width: 70px;
+		height: 70px;
+		background-color: #07C160;
+		border-radius: 8px;
+		border: 2px solid #fff;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.my-avatar-text {
+		font-size: 28px;
+		color: #fff;
+		font-weight: 500;
+	}
+
+	/* 动态列表 */
+	.moment-list {
+		padding-top: 28px;
+		padding-bottom: 20px;
+	}
+
+	.moment-item {
+		display: flex;
+		flex-direction: row;
+		padding: 12px 16px;
+	}
+
+	.avatar {
+		width: 44px;
+		height: 44px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-right: 10px;
+	}
+
+	.avatar-text {
+		font-size: 18px;
+		color: #fff;
+		font-weight: 500;
+	}
+
+	.moment-body {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.nickname {
+		font-size: 15px;
+		color: #576B95;
+		font-weight: 500;
+	}
+
+	.moment-text {
+		font-size: 15px;
+		color: #333;
+		line-height: 20px;
+		margin-top: 4px;
+	}
+
+	.image-grid {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+		margin-top: 8px;
+	}
+
+	.grid-image {
+		width: 90px;
+		height: 90px;
+		margin-right: 6px;
+		margin-bottom: 6px;
+	}
+
+	.moment-meta {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		margin-top: 8px;
+	}
+
+	.time {
+		font-size: 12px;
+		color: #B2B2B2;
+	}
+
+	.comment-btn {
+		width: 36px;
+		height: 22px;
+		background-color: #F7F7F7;
+		border-radius: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.comment-icon {
+		width: 14px;
+		height: 10px;
+		border: 1.5px solid #576B95;
+		border-radius: 3px;
+		position: relative;
+		box-sizing: border-box;
+	}
+
+	.comment-icon .i1 {
+		position: absolute;
+		bottom: -4px;
+		left: 3px;
+		border-width: 4px 3px 0;
+		border-style: solid;
+		border-color: #576B95 transparent transparent transparent;
+	}
+
+	.like-wrap {
+		margin-top: 8px;
+		background-color: #F7F7F7;
+		border-radius: 4px;
+		padding: 8px 10px;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.heart-icon {
+		width: 12px;
+		height: 11px;
+		background-color: #FA5151;
+		position: relative;
+		margin-right: 6px;
+		transform: rotate(-45deg);
+	}
+
+	.heart-icon .i1,
+	.heart-icon .i2 {
+		position: absolute;
+		width: 12px;
+		height: 11px;
+		background-color: #FA5151;
+		border-radius: 50%;
+	}
+
+	.heart-icon .i1 {
+		top: -5px;
+		left: 0;
+	}
+
+	.heart-icon .i2 {
+		top: 0;
+		left: 5px;
+	}
+
+	.like-names {
+		font-size: 14px;
+		color: #576B95;
+	}
+</style>

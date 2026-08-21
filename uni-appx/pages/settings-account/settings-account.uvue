@@ -1,0 +1,160 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">账号与安全</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<view class="menu-group">
+				<view
+					class="menu-item"
+					v-for="(item, index) in menuList"
+					:key="item.key"
+					:class="{ 'menu-item-last': index === menuList.length - 1 }"
+					@click="onItemClick(item)"
+				>
+					<text class="menu-name">{{ item.name }}</text>
+					<text v-if="item.value !== ''" class="menu-value">{{ item.value }}</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type MenuItem = {
+		key: string
+		name: string
+		value: string
+	}
+
+	const menuList = ref<MenuItem[]>([
+		{ key: 'wechat_id', name: '微信号', value: 'lin_wan' },
+		{ key: 'phone', name: '手机号', value: '138****8000' },
+		{ key: 'password', name: '微信密码', value: '已设置' },
+		{ key: 'voice_lock', name: '声音锁', value: '未设置' },
+		{ key: 'emergency', name: '应急联系人', value: '暂无' },
+		{ key: 'devices', name: '登录设备管理', value: '' },
+		{ key: 'more_security', name: '更多安全设置', value: '' }
+	])
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onItemClick = (item: MenuItem) => {
+		if (item.key === 'voice_lock') {
+			uni.navigateTo({ url: '/pages/settings-voice-lock/settings-voice-lock' })
+			return
+		}
+		if (item.key === 'emergency') {
+			uni.navigateTo({ url: '/pages/settings-emergency/settings-emergency' })
+			return
+		}
+		if (item.key === 'devices') {
+			uni.navigateTo({ url: '/pages/settings-devices/settings-devices' })
+			return
+		}
+		uni.showToast({ title: item.name, icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	.menu-group {
+		background-color: #FFFFFF;
+		margin-top: 8px;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+		box-sizing: border-box;
+	}
+
+	.menu-item-last {
+		border-bottom: none;
+	}
+
+	.menu-name {
+		font-size: 16px;
+		color: #000;
+	}
+
+	.menu-value {
+		font-size: 14px;
+		color: #999;
+		margin-left: auto;
+		margin-right: 6px;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+	}
+</style>

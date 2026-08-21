@@ -1,0 +1,243 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部搜索栏 -->
+		<view class="search-header">
+			<view class="search-box">
+				<view class="search-icon">
+					<view class="i1"></view>
+				</view>
+				<input
+					class="search-input"
+					type="text"
+					v-model="keyword"
+					placeholder="搜索"
+					placeholder-class="search-placeholder"
+					focus
+					@confirm="onSearch"
+				/>
+			</view>
+			<text class="cancel-text" @click="goBack">取消</text>
+		</view>
+
+		<!-- 搜索结果 -->
+		<scroll-view class="result-scroll" scroll-y>
+			<view class="result-list">
+				<text class="section-title">聊天记录</text>
+
+				<view
+					class="result-item"
+					v-for="(item, index) in resultList"
+					:key="item.id"
+					:class="{ 'result-item-last': index === resultList.length - 1 }"
+					@click="onItemClick(item)"
+				>
+					<view class="avatar" :style="{ backgroundColor: item.avatarColor }">
+						<text class="avatar-text">{{ item.avatarText }}</text>
+					</view>
+					<view class="result-content">
+						<text class="result-name">{{ item.name }}</text>
+						<text class="result-message">{{ item.message }}</text>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type ResultItem = {
+		id: string
+		name: string
+		avatarText: string
+		avatarColor: string
+		message: string
+	}
+
+	const keyword = ref<string>('')
+
+	const resultList = ref<ResultItem[]>([
+		{
+			id: '1',
+			name: '林晚',
+			avatarText: '林',
+			avatarColor: '#07C160',
+			message: '周末的方案评审会议改到下午三点'
+		},
+		{
+			id: '2',
+			name: '产品交流群',
+			avatarText: '群',
+			avatarColor: '#999999',
+			message: '关于新方案的排版细节需要再确认一下'
+		},
+		{
+			id: '3',
+			name: '文件传输助手',
+			avatarText: '文',
+			avatarColor: '#5B6BFF',
+			message: '方案终稿_v3.pdf 已经发送给你了'
+		}
+	])
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onSearch = () => {
+		uni.showToast({ title: `搜索：${keyword.value}`, icon: 'none' })
+	}
+
+	const onItemClick = (item: ResultItem) => {
+		uni.showToast({ title: item.name, icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部搜索栏 */
+	.search-header {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 8px 12px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.search-box {
+		flex: 1;
+		height: 36px;
+		background-color: #FFFFFF;
+		border-radius: 6px;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 0 10px;
+	}
+
+	.search-icon {
+		width: 14px;
+		height: 14px;
+		border: 2px solid #999;
+		border-radius: 50%;
+		position: relative;
+		margin-right: 8px;
+		flex-shrink: 0;
+	}
+
+	.search-icon .i1 {
+		position: absolute;
+		bottom: -3px;
+		right: -3px;
+		width: 6px;
+		height: 2px;
+		background-color: #999;
+		transform: rotate(45deg);
+		transform-origin: left center;
+	}
+
+	.search-input {
+		flex: 1;
+		height: 36px;
+		font-size: 15px;
+		color: #000;
+	}
+
+	.search-placeholder {
+		color: #C8C8C8;
+		font-size: 15px;
+	}
+
+	.cancel-text {
+		font-size: 16px;
+		color: #333;
+		margin-left: 12px;
+		padding: 4px;
+	}
+
+	/* 搜索结果 */
+	.result-scroll {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	.result-list {
+		background-color: #FFFFFF;
+	}
+
+	.section-title {
+		font-size: 13px;
+		color: #999;
+		padding: 12px 16px 8px;
+		background-color: #F5F5F5;
+	}
+
+	.result-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 12px 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.result-item-last {
+		border-bottom: none;
+	}
+
+	.avatar {
+		width: 44px;
+		height: 44px;
+		border-radius: 8px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-right: 12px;
+		flex-shrink: 0;
+	}
+
+	.avatar-text {
+		font-size: 17px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.result-content {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		overflow: hidden;
+	}
+
+	.result-name {
+		font-size: 16px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.result-message {
+		font-size: 14px;
+		color: #999;
+		margin-top: 6px;
+		lines: 1;
+		text-overflow: ellipsis;
+		overflow: hidden;
+	}
+</style>

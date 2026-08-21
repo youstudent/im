@@ -1,0 +1,134 @@
+<template>
+	<view class="splash-page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar" :style="{ height: statusBarHeight + 'px' }"></view>
+
+		<view class="content">
+			<view class="logo">
+				<view class="face">
+					<view class="eyes">
+						<view class="eye"></view>
+						<view class="eye"></view>
+					</view>
+					<view class="mouth"></view>
+				</view>
+			</view>
+			<text class="brand">WorkChat</text>
+			<text class="slogan">连接每一刻</text>
+		</view>
+
+		<text class="version">WorkChat 1.0.0</text>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref, onMounted } from 'vue'
+
+	const statusBarHeight = ref<number>(44)
+
+	try {
+		const info = uni.getSystemInfoSync()
+		statusBarHeight.value = info.statusBarHeight || 44
+	} catch (e) {}
+
+	onMounted(() => {
+		setTimeout(() => {
+			uni.redirectTo({
+				url: '/pages/login/login'
+			})
+		}, 2000)
+	})
+</script>
+
+<style scoped>
+	.splash-page {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: #07C160;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.status-bar {
+		width: 100%;
+		background-color: #07C160;
+	}
+
+	.content {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		align-items: center;
+		padding-bottom: 60px;
+	}
+
+	/* logo：白底圆角块 + 绿色笑脸（适配绿底启动页） */
+	.logo {
+		width: 96px;
+		height: 96px;
+		background-color: #FFFFFF;
+		border-radius: 24px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.face {
+		position: relative;
+		width: 54px;
+		height: 46px;
+	}
+
+	.eyes {
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+		width: 38px;
+		margin: 0 auto;
+	}
+
+	.eye {
+		width: 8px;
+		height: 8px;
+		background-color: #07C160;
+		border-radius: 50%;
+	}
+
+	.mouth {
+		position: absolute;
+		bottom: 0;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 36px;
+		height: 18px;
+		border-bottom: 4px solid #07C160;
+		border-radius: 0 0 18px 18px;
+	}
+
+	.brand {
+		margin-top: 24px;
+		font-size: 40px;
+		color: #FFFFFF;
+		font-weight: 600;
+		letter-spacing: 2px;
+	}
+
+	.slogan {
+		font-size: 16px;
+		color: #FFFFFF;
+		opacity: 0.95;
+		margin-top: 12px;
+	}
+
+	.version {
+		font-size: 12px;
+		color: #FFFFFF;
+		opacity: 0.8;
+		text-align: center;
+		padding-bottom: 32px;
+	}
+</style>

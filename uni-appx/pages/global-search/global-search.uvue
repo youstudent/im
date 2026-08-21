@@ -1,0 +1,284 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 + 搜索栏 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<view class="search-bar">
+				<view class="search-dot"></view>
+				<input class="search-input" placeholder="搜索" :focus="true" confirm-type="search" />
+			</view>
+			<text class="cancel-btn" @click="goBack">取消</text>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<!-- 搜索指定内容入口 -->
+			<view class="category-section">
+				<view class="category-row">
+					<view
+						class="category-item"
+						v-for="(item, index) in categoryList"
+						:key="index"
+						@click="onCategoryClick(item)"
+					>
+						<view class="category-icon" :class="'icon-bg-' + index">
+							<text class="category-text">{{ item.icon }}</text>
+						</view>
+						<text class="category-label">{{ item.label }}</text>
+					</view>
+				</view>
+			</view>
+
+			<!-- 热门搜索 -->
+			<view class="section">
+				<text class="section-title">热门搜索</text>
+				<view class="tag-row">
+					<text
+						class="tag-item"
+						:class="{ 'tag-item-last': index === hotTags.length - 1 }"
+						v-for="(tag, index) in hotTags"
+						:key="index"
+						@click="onTagClick(tag)"
+					>{{ tag }}</text>
+				</view>
+			</view>
+
+			<!-- 搜索历史 -->
+			<view class="section">
+				<text class="section-title">搜索历史</text>
+				<view class="history-card">
+					<view
+						class="history-item"
+						v-for="(item, index) in historyList"
+						:key="index"
+						:class="{ 'history-item-last': index === historyList.length - 1 }"
+						@click="onHistoryClick(item)"
+					>
+						<text class="history-text">{{ item }}</text>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type CategoryItem = {
+		icon: string
+		label: string
+	}
+
+	const categoryList = ref<CategoryItem[]>([
+		{ icon: '聊', label: '聊天' },
+		{ icon: '联', label: '联系人' },
+		{ icon: '公', label: '公众号' },
+		{ icon: '文', label: '文章' }
+	])
+
+	const hotTags = ref<string[]>(['世界杯', 'iPhone 16', 'ChatGPT', '成都美食'])
+
+	const historyList = ref<string[]>(['产品方案', '林晚', '天气预报'])
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onCategoryClick = (item: CategoryItem) => {
+		uni.showToast({ title: item.label, icon: 'none' })
+	}
+
+	const onTagClick = (tag: string) => {
+		uni.showToast({ title: tag, icon: 'none' })
+	}
+
+	const onHistoryClick = (item: string) => {
+		uni.showToast({ title: item, icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 + 搜索栏 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 8px 12px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-right: 12px;
+		flex-shrink: 0;
+	}
+
+	.search-bar {
+		flex: 1;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		height: 32px;
+		background-color: #FFFFFF;
+		border-radius: 4px;
+		padding: 0 10px;
+	}
+
+	.search-dot {
+		width: 8px;
+		height: 8px;
+		background-color: #333;
+		border-radius: 50%;
+		margin-right: 8px;
+		flex-shrink: 0;
+	}
+
+	.search-input {
+		flex: 1;
+		font-size: 14px;
+		color: #333;
+	}
+
+	.cancel-btn {
+		font-size: 15px;
+		color: #07C160;
+		margin-left: 12px;
+		flex-shrink: 0;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	/* 分类入口 */
+	.category-section {
+		background-color: #FFFFFF;
+		padding: 20px 16px 16px;
+	}
+
+	.category-row {
+		display: flex;
+		flex-direction: row;
+		justify-content: flex-start;
+	}
+
+	.category-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		margin-right: 24px;
+	}
+
+	.category-icon {
+		width: 48px;
+		height: 48px;
+		border-radius: 10px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-bottom: 6px;
+	}
+
+	.category-text {
+		font-size: 18px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.category-label {
+		font-size: 12px;
+		color: #666;
+	}
+
+	/* 分类图标背景色 */
+	.icon-bg-0 {
+		background-color: #576B95;
+	}
+
+	.icon-bg-1 {
+		background-color: #07C160;
+	}
+
+	.icon-bg-2 {
+		background-color: #FF9500;
+	}
+
+	.icon-bg-3 {
+		background-color: #E54D42;
+	}
+
+	/* 区块通用样式 */
+	.section {
+		margin-top: 12px;
+		padding: 0 16px;
+	}
+
+	.section-title {
+		font-size: 13px;
+		color: #999;
+		margin-bottom: 10px;
+	}
+
+	/* 标签行 */
+	.tag-row {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+		margin-bottom: -10px;
+	}
+
+	.tag-item {
+		font-size: 14px;
+		color: #333;
+		padding: 6px 14px;
+		background-color: #FFFFFF;
+		border-radius: 4px;
+		margin-right: 10px;
+		margin-bottom: 10px;
+	}
+
+	.tag-item-last {
+		margin-right: 0;
+	}
+
+	/* 历史记录卡片 */
+	.history-card {
+		background-color: #FFFFFF;
+		border-radius: 4px;
+	}
+
+	.history-item {
+		padding: 14px 16px;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.history-item-last {
+		border-bottom: none;
+	}
+
+	.history-text {
+		font-size: 15px;
+		color: #333;
+	}
+</style>

@@ -1,0 +1,241 @@
+<template>
+	<view class="page">
+		<!-- 自定义导航栏 -->
+		<view class="nav-bar">
+			<view class="back-arrow" @click="goBack"></view>
+			<text class="nav-title">群聊信息</text>
+		</view>
+
+		<scroll-view class="scroll" scroll-y>
+			<!-- 群成员 -->
+			<view class="members-section">
+				<text class="members-title">群成员 (8)</text>
+				<view class="members-row">
+					<view class="member" v-for="m in members" :key="m.name">
+						<view class="member-avatar" :style="{ backgroundColor: m.color }">
+							<text class="member-avatar-text">{{ m.name }}</text>
+						</view>
+					</view>
+				</view>
+			</view>
+
+			<!-- 菜单 -->
+			<view class="menu-group">
+				<view class="menu-item arrow" @click="onMenu('群聊名称')">
+					<text class="menu-label">群聊名称</text>
+					<text class="menu-value">产品交流群</text>
+					<view class="right-arrow"></view>
+				</view>
+				<view class="menu-item arrow" @click="onMenu('群公告')">
+					<text class="menu-label">群公告</text>
+					<view class="right-arrow"></view>
+				</view>
+				<view class="menu-item arrow menu-item-last" @click="onMenu('查找聊天内容')">
+					<text class="menu-label">查找聊天内容</text>
+					<view class="right-arrow"></view>
+				</view>
+			</view>
+
+			<view class="menu-group">
+				<view class="menu-item switch">
+					<text class="menu-label">消息免打扰</text>
+					<switch :checked="disturb" color="#07C160" @change="disturb = !disturb" />
+				</view>
+				<view class="menu-item switch">
+					<text class="menu-label">置顶聊天</text>
+					<switch :checked="top" color="#07C160" @change="top = !top" />
+				</view>
+				<view class="menu-item arrow menu-item-last" @click="onMenu('清空聊天记录')">
+					<text class="menu-label">清空聊天记录</text>
+					<view class="right-arrow"></view>
+				</view>
+			</view>
+
+			<!-- 退出群聊 -->
+			<view class="danger-btn" @click="onQuit">退出群聊</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type Member = {
+		name: string
+		color: string
+	}
+
+	const members = ref<Member[]>([
+		{ name: '张', color: '#4A90E2' },
+		{ name: '林', color: '#F5A623' },
+		{ name: '李', color: '#FF6B9D' },
+		{ name: '王', color: '#9B59B6' },
+		{ name: '赵', color: '#F5A623' },
+		{ name: '陈', color: '#07C160' },
+		{ name: '小', color: '#07C160' },
+		{ name: '刘', color: '#4A90E2' }
+	])
+
+	const disturb = ref<boolean>(true)
+	const top = ref<boolean>(false)
+
+	const goBack = () => {
+		uni.navigateBack({})
+	}
+
+	const onMenu = (title: string) => {
+		uni.showToast({ title, icon: 'none' })
+	}
+
+	const onQuit = () => {
+		uni.showModal({
+			title: '提示',
+			content: '确定退出该群聊吗？',
+			showCancel: true,
+			success: (res) => {
+				if (res.confirm) {
+					uni.showToast({ title: '已退出', icon: 'none' })
+				}
+			}
+		})
+	}
+</script>
+
+<style scoped>
+	.page {
+		flex: 1;
+		background-color: #EDEDED;
+	}
+
+	.nav-bar {
+		height: 44px;
+		background-color: #fff;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-arrow {
+		position: absolute;
+		left: 12px;
+		top: 50%;
+		transform: translateY(-50%) rotate(45deg);
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.scroll {
+		flex: 1;
+	}
+
+	.members-section {
+		background-color: #fff;
+		padding: 16px;
+		margin-bottom: 10px;
+	}
+
+	.members-title {
+		font-size: 13px;
+		color: #999;
+		margin-bottom: 12px;
+	}
+
+	.members-row {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: nowrap;
+		overflow: hidden;
+	}
+
+	.member {
+		margin-right: 12px;
+	}
+
+	.member-avatar {
+		width: 52px;
+		height: 52px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.member-avatar-text {
+		font-size: 18px;
+		color: #fff;
+		font-weight: 500;
+	}
+
+	.menu-group {
+		background-color: #fff;
+		margin-bottom: 10px;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 0 16px;
+		height: 50px;
+		border-bottom: 1px solid #F0F0F0;
+	}
+
+	.menu-item-last {
+		border-bottom: none;
+	}
+
+	.menu-label {
+		font-size: 16px;
+		color: #333;
+	}
+
+	.menu-value {
+		flex: 1;
+		font-size: 15px;
+		color: #999;
+		text-align: right;
+		margin-right: 6px;
+	}
+
+	.menu-item.arrow {
+		justify-content: space-between;
+	}
+
+	.menu-item.arrow .menu-label {
+		flex: 1;
+	}
+
+	.menu-item.switch {
+		justify-content: space-between;
+	}
+
+	.right-arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C7C7CC;
+		border-right: 2px solid #C7C7CC;
+		transform: rotate(45deg);
+	}
+
+	.danger-btn {
+		margin: 20px 0;
+		background-color: #fff;
+		height: 50px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 16px;
+		color: #FA5151;
+	}
+</style>

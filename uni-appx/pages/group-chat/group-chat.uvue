@@ -1,0 +1,298 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">产品交流群（8）</text>
+			<view class="more-icon" @click="onMore">
+				<view class="dot"></view>
+				<view class="dot"></view>
+				<view class="dot"></view>
+			</view>
+		</view>
+
+		<!-- 消息列表 -->
+		<scroll-view class="message-scroll" scroll-y>
+			<view class="message-list">
+				<view
+					class="message-row"
+					v-for="msg in messages"
+					:key="msg.id"
+					:class="msg.type"
+				>
+					<view v-if="msg.type === 'time'" class="time-badge">
+						<text class="time-text">{{ msg.content }}</text>
+					</view>
+
+					<template v-else-if="msg.type === 'incoming'">
+						<view
+							class="message-avatar"
+							:style="{ backgroundColor: msg.avatarColor }"
+						>
+							<text class="message-avatar-text">{{ msg.avatarText }}</text>
+						</view>
+						<view class="bubble-column">
+							<text class="sender-name">{{ msg.senderName }}</text>
+							<view class="message-bubble bubble-white">
+								<text class="message-text">{{ msg.content }}</text>
+							</view>
+						</view>
+					</template>
+
+					<template v-else-if="msg.type === 'outgoing'">
+						<view class="message-bubble bubble-green">
+							<text class="message-text">{{ msg.content }}</text>
+						</view>
+						<view
+							class="message-avatar"
+							:style="{ backgroundColor: msg.avatarColor }"
+						>
+							<text class="message-avatar-text">{{ msg.avatarText }}</text>
+						</view>
+					</template>
+				</view>
+			</view>
+		</scroll-view>
+
+		<!-- 底部输入栏（公共组件） -->
+		<chat-input-bar
+			:placeholder="'说点什么...'"
+			:showAt="true"
+			@send="sendMessage"
+			@voice="onVoice"
+			@more="onMoreAction"
+			@at="onAt"
+		></chat-input-bar>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type Message = {
+		id: string
+		type: string
+		content: string
+		avatarText?: string
+		avatarColor?: string
+		senderName?: string
+	}
+
+	const messages = ref<Message[]>([
+		{ id: 't1', type: 'time', content: '14:05' },
+		{
+			id: 'm1',
+			type: 'incoming',
+			content: '大家好，新版本发布啦～',
+			avatarText: '张',
+			avatarColor: '#007AFF',
+			senderName: '张可'
+		},
+		{
+			id: 'm2',
+			type: 'incoming',
+			content: '太棒了，马上更新！',
+			avatarText: '林',
+			avatarColor: '#FF9500',
+			senderName: '林晚'
+		},
+		{
+			id: 'm3',
+			type: 'outgoing',
+			content: '辛苦了！',
+			avatarText: '小',
+			avatarColor: '#07C160'
+		}
+	])
+
+	const goBack = () => {
+		uni.navigateBack({ animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+	const onMore = () => {
+		uni.navigateTo({ url: '/pages/group-info/group-info' })
+	}
+
+	const onVoice = () => {
+		uni.showToast({ title: '语音输入', icon: 'none' })
+	}
+
+	const onAt = () => {
+		uni.showToast({ title: '@ 群成员', icon: 'none' })
+	}
+
+	const onMoreAction = () => {
+		uni.navigateTo({ url: '/pages/chat-search/chat-search' })
+	}
+
+	const sendMessage = (text: string) => {
+		if (text.length === 0) return
+		const message: Message = {
+			id: `m${Date.now()}`,
+			type: 'outgoing',
+			content: text,
+			avatarText: '小',
+			avatarColor: '#07C160'
+		}
+		messages.value.push(message)
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F0F0F0;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.more-icon {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 8px;
+	}
+
+	.dot {
+		width: 4px;
+		height: 4px;
+		background-color: #333;
+		border-radius: 50%;
+		margin: 0 1.5px;
+	}
+
+	/* 消息列表 */
+	.message-scroll {
+		flex: 1;
+		background-color: #F0F0F0;
+		padding: 12px 0;
+	}
+
+	.message-list {
+		padding: 0 12px;
+	}
+
+	.message-row {
+		display: flex;
+		flex-direction: row;
+		align-items: flex-start;
+		margin-bottom: 16px;
+	}
+
+	.message-row.time {
+		justify-content: center;
+	}
+
+	.message-row.incoming {
+		justify-content: flex-start;
+	}
+
+	.message-row.outgoing {
+		justify-content: flex-end;
+	}
+
+	.time-badge {
+		background-color: #DADADA;
+		border-radius: 4px;
+		padding: 3px 6px;
+		margin: 4px 0;
+	}
+
+	.time-text {
+		font-size: 11px;
+		color: #FFFFFF;
+	}
+
+	.message-avatar {
+		width: 40px;
+		height: 40px;
+		border-radius: 6px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		flex-shrink: 0;
+	}
+
+	.message-row.incoming .message-avatar {
+		margin-right: 10px;
+	}
+
+	.message-row.outgoing .message-avatar {
+		margin-left: 10px;
+	}
+
+	.message-avatar-text {
+		font-size: 15px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.bubble-column {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		max-width: 280px;
+	}
+
+	.sender-name {
+		font-size: 12px;
+		color: #999;
+		margin-bottom: 4px;
+	}
+
+	.message-bubble {
+		padding: 10px 12px;
+		border-radius: 6px;
+		position: relative;
+	}
+
+	.bubble-white {
+		background-color: #FFFFFF;
+	}
+
+	.bubble-green {
+		background-color: #95EC69;
+	}
+
+	.message-text {
+		font-size: 15px;
+		color: #000;
+		line-height: 1.4;
+	}
+
+</style>

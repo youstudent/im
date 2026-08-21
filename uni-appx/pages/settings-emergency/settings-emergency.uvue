@@ -1,0 +1,202 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部说明 -->
+		<view class="top-desc">应急联系人可在你无法登录时协助验证身份、找回账号。</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<view class="card">
+				<view class="contact-row" v-for="(item, index) in contacts" :key="item.name" :class="{ 'contact-row-last': index === contacts.length - 1 }">
+					<view class="avatar">
+						<text class="avatar-text">{{ item.name.substring(0, 1) }}</text>
+					</view>
+					<view class="contact-info">
+						<text class="contact-name">{{ item.name }}</text>
+						<text class="contact-phone">{{ item.phone }}</text>
+					</view>
+					<text class="delete-btn" @click="onDelete(item.name)">删除</text>
+				</view>
+			</view>
+
+			<view class="add-card" @click="onAdd">
+				<text class="add-text">+ 添加应急联系人</text>
+			</view>
+		</scroll-view>
+
+		<!-- 底部导航 -->
+		<view class="nav-bar-bottom">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">应急联系人</text>
+			<view class="nav-right"></view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type Contact = {
+		name: string
+		phone: string
+	}
+
+	const contacts = ref<Contact[]>([
+		{ name: '张明', phone: '138****6688' },
+		{ name: '李娜', phone: '139****2233' }
+	])
+
+	const goBack = () => {
+		uni.navigateBack({ delta: 1 })
+	}
+
+	const onAdd = () => {
+		uni.showToast({ title: '添加应急联系人', icon: 'none' })
+	}
+
+	const onDelete = (name: string) => {
+		uni.showModal({
+			title: '提示',
+			content: `确认删除 ${name}？`,
+			confirmText: '删除',
+			success: (r) => {
+				if (r.confirm) {
+					contacts.value = contacts.value.filter(c => c.name !== name)
+					uni.showToast({ title: '已删除', icon: 'success' })
+				}
+			}
+		})
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F7F7F7;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F7F7F7;
+	}
+
+	/* 顶部说明 */
+	.top-desc {
+		font-size: 13px;
+		color: #888;
+		line-height: 20px;
+		padding: 12px 16px 16px 16px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F7F7F7;
+	}
+
+	.card {
+		background-color: #FFFFFF;
+		margin: 0 12px 12px 12px;
+		border-radius: 8px;
+		overflow: hidden;
+	}
+
+	.contact-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 12px 16px;
+		border-bottom: 1px solid #EEE;
+	}
+
+	.contact-row-last {
+		border-bottom: none;
+	}
+
+	.avatar {
+		width: 44px;
+		height: 44px;
+		border-radius: 22px;
+		background-color: #DDDDDD;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-right: 12px;
+	}
+
+	.avatar-text {
+		font-size: 16px;
+		color: #FFFFFF;
+		font-weight: 600;
+	}
+
+	.contact-info {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.contact-name {
+		font-size: 16px;
+		color: #333;
+		margin-bottom: 2px;
+	}
+
+	.contact-phone {
+		font-size: 12px;
+		color: #999;
+	}
+
+	.delete-btn {
+		font-size: 15px;
+		color: #EE2C2C;
+		padding: 4px 0;
+	}
+
+	.add-card {
+		background-color: #FFFFFF;
+		margin: 0 12px 12px 12px;
+		border-radius: 8px;
+		height: 52px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.add-text {
+		font-size: 15px;
+		color: #07C160;
+	}
+
+	/* 底部导航 */
+	.nav-bar-bottom {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 16px;
+		background-color: #1C1C1E;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #FFFFFF;
+		border-bottom: 2px solid #FFFFFF;
+		transform: rotate(45deg);
+		margin-left: 0;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #FFFFFF;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+</style>

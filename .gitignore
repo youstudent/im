@@ -6,6 +6,11 @@ dist/
 dist-electron/
 release/
 
+# uni-app x 移动端构建/缓存
+unpackage/
+.vite/
+.hbuilderx/
+
 # 日志
 *.log
 npm-debug.log*

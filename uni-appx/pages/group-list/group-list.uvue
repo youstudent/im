@@ -1,0 +1,224 @@
+<template>
+	<view class="page">
+		<!-- 自定义导航栏 -->
+		<view class="nav-bar">
+			<view class="back-arrow" @click="goBack"></view>
+			<text class="nav-title">群聊</text>
+		</view>
+
+		<scroll-view class="scroll" scroll-y>
+			<view class="group-list">
+				<view class="group-item" v-for="(item, index) in groups" :key="item.id" :class="{ 'group-item-last': index === groups.length - 1 }" @click="onItemClick(item)">
+					<view class="group-avatar" :style="{ backgroundColor: item.avatarColor }">
+						<view class="group-icon">
+							<view class="person person-front">
+								<view class="i1"></view>
+							</view>
+							<view class="person person-back">
+								<view class="i1"></view>
+							</view>
+						</view>
+					</view>
+					<view class="group-body">
+						<view class="group-row">
+							<text class="group-name">{{ item.name }}</text>
+							<text class="group-time">{{ item.time }}</text>
+						</view>
+						<view class="group-row">
+							<text class="group-msg">{{ item.lastMsg }}</text>
+							<view class="badge" v-if="item.unread > 0">
+								<text class="badge-text">{{ item.unread }}</text>
+							</view>
+						</view>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type GroupItem = {
+		id: number
+		name: string
+		avatarColor: string
+		lastMsg: string
+		time: string
+		unread: number
+	}
+
+	const groups = ref<GroupItem[]>([
+		{ id: 1, name: '产品交流群', avatarColor: '#07C160', lastMsg: '张可：大家好，新版本发布啦', time: '14:05', unread: 3 },
+		{ id: 2, name: '家人朋友', avatarColor: '#F5A623', lastMsg: '妈妈：记得按时吃饭', time: '昨天', unread: 0 },
+		{ id: 3, name: '项目攻坚组', avatarColor: '#4A90E2', lastMsg: '李娜：文档已更新', time: '周二', unread: 9 },
+		{ id: 4, name: '羽毛球约球', avatarColor: '#07C160', lastMsg: '王强：周六开打！', time: '周一', unread: 0 },
+		{ id: 5, name: '读书会', avatarColor: '#9B59B6', lastMsg: '[图片]', time: '上周', unread: 0 }
+	])
+
+	const goBack = () => {
+		uni.navigateBack({})
+	}
+
+	const onItemClick = (item: GroupItem) => {
+		uni.navigateTo({ url: '/pages/group-chat/group-chat' })
+	}
+</script>
+
+<style scoped>
+	.page {
+		flex: 1;
+		background-color: #EDEDED;
+	}
+
+	.nav-bar {
+		height: 44px;
+		background-color: #fff;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-arrow {
+		position: absolute;
+		left: 12px;
+		top: 50%;
+		transform: translateY(-50%) rotate(45deg);
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.scroll {
+		flex: 1;
+	}
+
+	.group-list {
+		background-color: #fff;
+	}
+
+	.group-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 12px 16px;
+		border-bottom: 1px solid #F0F0F0;
+	}
+
+	.group-item-last {
+		border-bottom: none;
+	}
+
+	.group-avatar {
+		width: 48px;
+		height: 48px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-right: 12px;
+	}
+
+	.group-icon {
+		position: relative;
+		width: 28px;
+		height: 22px;
+	}
+
+	.person {
+		position: absolute;
+		background-color: #fff;
+	}
+
+	.person-front {
+		width: 14px;
+		height: 22px;
+		left: 10px;
+		bottom: 0;
+	}
+
+	.person-front .i1 {
+		position: absolute;
+		top: 0;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 8px;
+		height: 8px;
+		background-color: #fff;
+		border-radius: 50%;
+	}
+
+	.person-back {
+		width: 10px;
+		height: 16px;
+		left: 0;
+		bottom: 0;
+	}
+
+	.person-back .i1 {
+		position: absolute;
+		top: 0;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 6px;
+		height: 6px;
+		background-color: #fff;
+		border-radius: 50%;
+	}
+
+	.group-body {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.group-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.group-name {
+		font-size: 16px;
+		color: #333;
+		font-weight: 500;
+	}
+
+	.group-time {
+		font-size: 12px;
+		color: #B2B2B2;
+	}
+
+	.group-msg {
+		font-size: 14px;
+		color: #999;
+		margin-top: 4px;
+	}
+
+	.badge {
+		min-width: 18px;
+		height: 18px;
+		background-color: #FA5151;
+		border-radius: 9px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0 5px;
+		margin-top: 4px;
+	}
+
+	.badge-text {
+		font-size: 11px;
+		color: #fff;
+	}
+</style>

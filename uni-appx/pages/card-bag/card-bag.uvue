@@ -1,0 +1,145 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="back-icon" @click="goBack"></view>
+      <text class="nav-title">卡包</text>
+    </view>
+
+    <view class="content">
+      <view class="group-title">券</view>
+      <view class="coupon-card">
+        <view class="coupon-row" @click="onCouponTap">
+          <view class="coupon-badge badge-red">¥20</view>
+          <view class="coupon-info">
+            <text class="coupon-name">餐饮通用券</text>
+            <text class="coupon-sub">有效期至 2026-09-30</text>
+          </view>
+        </view>
+        <view class="coupon-row coupon-row-last" @click="onCouponTap">
+          <view class="coupon-badge badge-purple">星</view>
+          <view class="coupon-info">
+            <text class="coupon-name">星巴克会员卡</text>
+            <text class="coupon-sub">余额 ¥158.00</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onCouponTap = () => {
+  uni.navigateTo({ url: '/pages/card-detail/card-detail' })
+}
+</script>
+
+<style>
+.page {
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  height: 44px;
+  background: #F7F7F7;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  background: #F7F7F7;
+  position: relative;
+}
+
+.back-icon {
+  width: 11px;
+  height: 11px;
+  border-left: 2px solid #333;
+  border-bottom: 2px solid #333;
+  transform: rotate(45deg);
+}
+
+.nav-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+  text-align: center;
+  margin-right: 20px;
+}
+
+.content {
+  padding: 0;
+}
+
+.group-title {
+  font-size: 13px;
+  color: #999;
+  padding: 16px 16px 12px 16px;
+}
+
+.coupon-card {
+  background: #FFFFFF;
+  border-radius: 8px;
+  margin: 0 16px;
+  overflow: hidden;
+}
+
+.coupon-row {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid #F0F0F0;
+}
+
+.coupon-row-last {
+  border-bottom: none;
+}
+
+.coupon-badge {
+  width: 50px;
+  height: 60px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  font-size: 16px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-right: 16px;
+}
+
+.badge-red {
+  background: #E5454A;
+}
+
+.badge-purple {
+  background: #9B59B6;
+}
+
+.coupon-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.coupon-name {
+  font-size: 15px;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.coupon-sub {
+  font-size: 12px;
+  color: #999;
+}
+
+</style>

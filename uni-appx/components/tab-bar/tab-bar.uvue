@@ -1,0 +1,235 @@
+<template>
+	<view class="tab-bar-wrap">
+		<view class="tab-bar">
+			<view
+				class="tab-item"
+				v-for="tab in tabs"
+				:key="tab.key"
+				@click="onTabClick(tab)"
+			>
+				<view class="tab-icon" :class="`icon-${tab.key}`" :style="iconStyle(tab.key)">
+					<view class="i1" :class="`i1-${tab.key}`" :style="i1Style(tab.key)"></view>
+					<view class="i2" :class="`i2-${tab.key}`" :style="i2Style(tab.key)"></view>
+				</view>
+				<text class="tab-label" :style="{ color: colorOf(tab.key) }">{{ tab.label }}</text>
+			</view>
+		</view>
+		<view class="safe-area"></view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type TabItem = {
+		key: string
+		label: string
+	}
+
+	type ColorStyle = {
+		borderColor?: string
+		backgroundColor?: string
+		boxShadow?: string
+	}
+
+	const props = defineProps<{
+		activeKey: string
+	}>()
+
+	const emit = defineEmits<{
+		(e: 'change', key: string): void
+	}>()
+
+	const tabs = ref<TabItem[]>([
+		{ key: 'chat', label: 'chat' },
+		{ key: 'contacts', label: '通讯录' },
+		{ key: 'discover', label: '发现' },
+		{ key: 'me', label: '我' }
+	])
+
+	let lastTapTime = 0
+
+	const isActive = (key: string): boolean => key === props.activeKey
+
+	const colorOf = (key: string): string => (isActive(key) ? '#07C160' : '#999')
+
+	const onTabClick = (tab: TabItem) => {
+		// 点击当前 tab 不切换
+		if (tab.key === props.activeKey) return
+		// 防连点：300ms 内重复点击忽略
+		const now = Date.now()
+		if (now - lastTapTime < 300) return
+		lastTapTime = now
+		emit('change', tab.key)
+	}
+
+	// 以下颜色全部数据驱动（uvue 仅支持单 class 选择器，禁后代/复合选择器）
+	const iconStyle = (key: string): ColorStyle => {
+		const c = colorOf(key)
+		if (key === 'chat' || key === 'discover') return { borderColor: c }
+		return {}
+	}
+
+	const i1Style = (key: string): ColorStyle => {
+		const c = colorOf(key)
+		if (key === 'chat' || key === 'contacts' || key === 'me') return { borderColor: c }
+		return { backgroundColor: c } // discover 中心点
+	}
+
+	const i2Style = (key: string): ColorStyle => {
+		const c = colorOf(key)
+		if (key === 'chat') return { backgroundColor: c, boxShadow: `0 5px 0 ${c}` }
+		if (key === 'contacts' || key === 'me') return { borderColor: c }
+		return { backgroundColor: c } // discover 指针
+	}
+</script>
+
+<style>
+	.tab-bar-wrap {
+		background-color: #F8F8F8;
+		border-top: 1px solid #E5E5E5;
+	}
+
+	.tab-bar {
+		display: flex;
+		flex-direction: row;
+		justify-content: space-around;
+		align-items: flex-end;
+		padding-top: 6px;
+	}
+
+	.tab-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding-bottom: 4px;
+		flex: 1;
+	}
+
+	.tab-icon {
+		width: 22px;
+		height: 22px;
+		position: relative;
+	}
+
+	.tab-label {
+		font-size: 10px;
+		margin-top: 3px;
+	}
+
+	/* 以下全部为单 class 选择器（uvue 约束），颜色由 :style 数据驱动 */
+	/* chat 图标：对话气泡 + 两条横线 */
+	.icon-chat {
+		border: 2px solid #999;
+		border-radius: 9px;
+		box-sizing: border-box;
+	}
+
+	.i1-chat {
+		position: absolute;
+		bottom: -5px;
+		left: 5px;
+		border-width: 5px 4px 0;
+		border-style: solid;
+	}
+
+	.i2-chat {
+		position: absolute;
+		top: 5px;
+		left: 4px;
+		width: 10px;
+		height: 2px;
+		background-color: #999;
+		box-shadow: 0 5px 0 #999;
+	}
+
+	/* 通讯录图标：人形 */
+	.icon-contacts {
+		position: relative;
+	}
+
+	.i1-contacts {
+		width: 8px;
+		height: 8px;
+		border: 2px solid #999;
+		border-radius: 50%;
+		position: absolute;
+		top: 0;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	.i2-contacts {
+		width: 16px;
+		height: 8px;
+		border: 2px solid #999;
+		border-bottom: none;
+		border-radius: 10px 10px 0 0;
+		position: absolute;
+		bottom: 0;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	/* 发现图标：指南针 */
+	.icon-discover {
+		border: 2px solid #999;
+		border-radius: 50%;
+		position: relative;
+		box-sizing: border-box;
+	}
+
+	.i1-discover {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 4px;
+		height: 4px;
+		background-color: #999;
+		border-radius: 50%;
+	}
+
+	.i2-discover {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%) rotate(45deg);
+		width: 14px;
+		height: 2px;
+		background-color: #999;
+	}
+
+	/* 我图标：人形 */
+	.icon-me {
+		position: relative;
+	}
+
+	.i1-me {
+		width: 8px;
+		height: 8px;
+		border: 2px solid #999;
+		border-radius: 50%;
+		position: absolute;
+		top: 0;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	.i2-me {
+		width: 16px;
+		height: 8px;
+		border: 2px solid #999;
+		border-bottom: none;
+		border-radius: 10px 10px 0 0;
+		position: absolute;
+		bottom: 0;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	.safe-area {
+		width: 100%;
+		height: env(safe-area-inset-bottom);
+	}
+</style>

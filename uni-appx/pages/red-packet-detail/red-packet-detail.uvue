@@ -1,0 +1,205 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 自定义导航栏 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<view class="nav-title"></view>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<view class="content">
+			<!-- 黄色圆 + 金额 -->
+			<view class="coin">
+				<view class="coin-row">
+					<text class="coin-symbol">¥</text>
+					<text class="coin-value">88.88</text>
+				</view>
+			</view>
+
+			<!-- 标题与说明 -->
+			<text class="title">林晚 的红包</text>
+			<text class="desc">已存入零钱，可用于发红包</text>
+
+			<!-- 收下按钮 -->
+			<view class="btn-wrap">
+				<view class="btn-primary" @click="onReceive">
+					<text class="btn-primary-text">开心收下</text>
+				</view>
+			</view>
+
+			<!-- 查看领取详情 -->
+			<view class="link-row" @click="onViewDetail">
+				<text class="link-text">查看领取详情</text>
+				<view class="arrow-right"></view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+	uni.navigateBack({ delta: 1 })
+}
+
+const onReceive = () => {
+	uni.showToast({ title: '已存入零钱', icon: 'success' })
+	setTimeout(() => {
+		uni.navigateBack({ delta: 1 })
+	}, 2000)
+}
+
+const onViewDetail = () => {
+	uni.showToast({ title: '查看领取详情', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+	width: 100%;
+	height: 100%;
+	background-color: #EE2C2C;
+	box-sizing: border-box;
+}
+
+/* 状态栏 */
+.status-bar {
+	height: 44px;
+	width: 100%;
+}
+
+/* 导航栏 */
+.nav-bar {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	height: 44px;
+	padding: 0 16px;
+	position: relative;
+}
+
+.back-icon {
+	width: 12px;
+	height: 12px;
+	border-left: 2px solid #FFFFFF;
+	border-bottom: 2px solid #FFFFFF;
+	transform: rotate(45deg);
+	margin-left: 6px;
+}
+
+.nav-title {
+	width: 0;
+	height: 24px;
+}
+
+.nav-right {
+	width: 24px;
+	height: 24px;
+}
+
+/* 内容区 */
+.content {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 0 16px;
+	margin-top: 40px;
+}
+
+/* 黄色圆 */
+.coin {
+	width: 100px;
+	height: 100px;
+	border-radius: 50%;
+	background-color: #F4C043;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin-top: 16px;
+}
+
+.coin-row {
+	display: flex;
+	flex-direction: row;
+	align-items: flex-end;
+}
+
+.coin-symbol {
+	color: #5A3A0A;
+	font-size: 18px;
+	font-weight: 500;
+	margin-right: 2px;
+}
+
+.coin-value {
+	color: #5A3A0A;
+	font-size: 22px;
+	font-weight: 600;
+}
+
+/* 标题与说明 */
+.title {
+	color: #FFFFFF;
+	font-size: 18px;
+	font-weight: 600;
+	margin-top: 20px;
+}
+
+.desc {
+	color: #FFFFFF;
+	font-size: 13px;
+	opacity: 0.85;
+	margin-top: 8px;
+}
+
+/* 主按钮 */
+.btn-wrap {
+	width: 100%;
+	margin-top: 24px;
+}
+
+.btn-primary {
+	width: 100%;
+	height: 48px;
+	background-color: #F4C043;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.btn-primary-text {
+	color: #5A3A0A;
+	font-size: 17px;
+	font-weight: 600;
+}
+
+/* 链接 */
+.link-row {
+	margin-top: 18px;
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	justify-content: center;
+}
+
+.link-text {
+	color: #FFFFFF;
+	font-size: 14px;
+	opacity: 0.9;
+}
+
+.arrow-right {
+	width: 7px;
+	height: 7px;
+	border-top: 1.5px solid #FFFFFF;
+	border-right: 1.5px solid #FFFFFF;
+	transform: rotate(45deg);
+	margin-left: 6px;
+	opacity: 0.9;
+}
+</style>

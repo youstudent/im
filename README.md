@@ -5,7 +5,7 @@
 [![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-一套完整的即时通讯系统，包含 **桌面客户端**（Electron）、**Web 管理后台**（Vue3）和 **服务端**（Go），覆盖单聊 / 群聊 / 好友关系 / 语音通话 / 通知中心 / 本地加密存储 / 自动更新等完整 IM 能力。
+一套完整的即时通讯系统，包含 **桌面客户端**（Electron）、**移动端**（uni-app x，UI 已完成、后端对接中）、**Web 管理后台**（Vue3）和 **服务端**（Go），覆盖单聊 / 群聊 / 好友关系 / 语音通话 / 通知中心 / 本地加密存储 / 自动更新等完整 IM 能力。
 
 ## 目录
 
@@ -46,14 +46,15 @@
 | 更新 | 应用内版本检查（24h TTL 缓存）、下载安装包 sha256 校验、静默安装（Windows） |
 | 安全 | 登录滑动验证码（失败触发）、JWT 双令牌（轮换 + 黑名单撤销）、敏感词过滤、发送频率风控、文件 extra 域名白名单、敏感会话不落盘、管理端角色鉴权 |
 | 管理后台 | 数据看板、用户管理（禁用/启用/搜索）、群组管理（成员/消息查看/解散并实时通知）、版本发布管理、默认管理员首次登录强制改密 |
+| 移动端（uni-app x） | 微信风格 UI（58 页）：会话/聊天/通讯录/群聊/朋友圈/钱包（红包/转账/银行卡）/音视频通话/扫码/设置，后端对接规划中 |
 
 ## 整体架构
 
 ```
-客户端层   desktop_client (Electron + Vue3)      admin (Vue3 Web)
-    │  ▲                                            │  ▲
-    │  │  HTTP REST + WebSocket 长连接             │  │  HTTP REST
-    ▼  │                                            ▼  │
+客户端层   desktop_client (Electron + Vue3)   uni-appx (uni-app x 移动端)   admin (Vue3 Web)
+    │  ▲                                            │                          │  ▲
+    │  │  HTTP REST + WebSocket 长连接             │  （后端对接中）         │  │  HTTP REST
+    ▼  │                                            ▼                          ▼  │
 接入层   HTTP API（Gin）        WebSocket 网关（gorilla/websocket）
     └────────────┬──────────────────────┬─────────────┘
                  ▼                      ▼
@@ -80,6 +81,11 @@
 │   ├── configs/           #   运行配置（config.yaml 不入库，见 config.example.yaml）
 │   └── migrations/        #   SQL 迁移脚本（0001~0014）
 ├── admin/                 # 管理后台（Vue 3 + Vite + vue-router，dev 端口 5174）
+├── uni-appx/              # 移动端（uni-app x / UVue + UTS，HBuilderX 工程；UI 已完成，后端对接中）
+│   ├── pages/             #   58 个页面：会话/聊天/通讯录/群聊/朋友圈/钱包/音视频通话/设置等
+│   ├── components/        #   TabBar、聊天输入栏、表情面板等公共组件
+│   ├── pages.json         #   页面路由与窗口配置
+│   └── manifest.json      #   应用配置（AppID / 端能力）
 └── docs/                  # 架构设计、功能方案、优化排查等文档
 ```
 
@@ -89,6 +95,7 @@
 |---|---|
 | 服务端 | Go 1.25 · Gin · gorilla/websocket · go-redis v9 · go-sql-driver/mysql · golang-jwt v5 · 阿里云 OSS SDK |
 | 桌面端 | Electron 33 · Vue 3 · Vite 5 · better-sqlite3-multiple-ciphers（SQLCipher 加密本地库）· WebRTC（语音通话）· electron-builder |
+| 移动端 | uni-app x（UVue + UTS）· HBuilderX · Android / iOS（UI 阶段，后端对接中） |
 | 管理后台 | Vue 3 · Vite 5 · vue-router |
 | 基础设施 | MySQL 8.0 · Redis 7 · 阿里云 OSS |
 
@@ -99,6 +106,7 @@
 | Go | ≥ 1.25 | 服务端编译（见 `service/go.mod`） |
 | Node.js | ≥ 18（建议 20+） | 前端构建与 E2E 脚本（脚本依赖原生 fetch） |
 | Docker | 任意新版 | 本地 MySQL 8.0 + Redis 7（`service/docker-compose.yml`） |
+| HBuilderX | 最新正式版 | 移动端 uni-app x 工程的运行/打包（含 uni-app x 编译环境） |
 | 阿里云 OSS | — | 图片/文件/语音存储；本地调试也需配置（无降级路径） |
 | 构建工具链 | Python 3 + VS Build Tools | 仅当 better-sqlite3 无预编译包需源码编译时（Windows 常见） |
 
@@ -144,6 +152,14 @@ npm run dev        # 端口 5174，/api 代理到 :8080
 ```
 
 默认管理员账号：`admin` / `admin123`（服务端首次启动自动 seed，首次登录会强制修改密码）。
+
+### 5. 运行移动端（uni-app x）
+
+1. 安装 [HBuilderX](https://www.dcloud.io/hbuilderx.html)（需含 uni-app x 编译环境，Android 端需 Android Studio / iOS 需 Xcode）；
+2. HBuilderX 打开 `uni-appx/` 目录，「运行 → 运行到手机或模拟器」选择目标设备；
+3. 打包：「发行 → 原生 App 云打包 / 本地打包」。
+
+> ⚠️ 移动端当前为 **UI 阶段**：页面与交互已完成（会话/聊天/通讯录/群聊/朋友圈/钱包/音视频通话/设置等 58 页），尚未对接服务端接口与 WebSocket，数据均为本地静态演示数据。
 
 ## 测试
 

@@ -1,0 +1,409 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">林晚</text>
+			<view class="more-icon" @click="onMore">
+				<view class="dot"></view>
+				<view class="dot"></view>
+				<view class="dot"></view>
+			</view>
+		</view>
+
+		<!-- 消息列表 -->
+		<scroll-view class="message-scroll" scroll-y>
+			<view class="message-list">
+				<view
+					class="message-row"
+					v-for="msg in messages"
+					:key="msg.id"
+					:class="msg.type"
+				>
+					<view v-if="msg.type === 'time'" class="time-badge">
+						<text class="time-text">{{ msg.content }}</text>
+					</view>
+
+					<template v-else-if="msg.type === 'incoming'">
+						<view
+							class="message-avatar"
+							:style="{ backgroundColor: msg.avatarColor }"
+						>
+							<text class="message-avatar-text">{{ msg.avatarText }}</text>
+						</view>
+						<view class="message-bubble bubble-white">
+							<text class="message-text">{{ msg.content }}</text>
+						</view>
+					</template>
+
+					<template v-else-if="msg.type === 'redpacket'">
+						<view
+							class="message-avatar"
+							:style="{ backgroundColor: msg.avatarColor }"
+						>
+							<text class="message-avatar-text">{{ msg.avatarText }}</text>
+						</view>
+						<view class="message-bubble bubble-white rp-bubble" @click="onRedPacketTap">
+							<view class="rp-inner">
+								<view class="rp-envelope">
+								<text class="envelope-text">¥</text>
+							</view>
+								<view class="rp-col">
+									<text class="rp-text">{{ msg.content }}</text>
+									<text class="rp-tip">领取红包</text>
+								</view>
+								<text class="rp-amount">¥{{ msg.amount }}</text>
+							</view>
+						</view>
+					</template>
+
+					<template v-else-if="msg.type === 'transfer'">
+						<view
+							class="message-avatar"
+							:style="{ backgroundColor: msg.avatarColor }"
+						>
+							<text class="message-avatar-text">{{ msg.avatarText }}</text>
+						</view>
+						<view class="message-bubble bubble-white tf-bubble" @click="onTransferTap">
+							<view class="tf-inner">
+								<text class="tf-title">转账</text>
+								<text class="tf-amount">¥{{ msg.amount }}</text>
+							</view>
+						</view>
+					</template>
+
+					<template v-else-if="msg.type === 'outgoing'">
+						<view class="message-bubble bubble-green">
+							<text class="message-text">{{ msg.content }}</text>
+						</view>
+					</template>
+				</view>
+			</view>
+		</scroll-view>
+
+		<!-- 底部输入栏（公共组件） -->
+		<chat-input-bar
+			:placeholder="'发送消息'"
+			:showAt="false"
+			@send="sendMessage"
+			@voice="onVoice"
+			@more="onMoreAction"
+		></chat-input-bar>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type Message = {
+		id: string
+		type: string
+		content: string
+		avatarText?: string
+		avatarColor?: string
+		amount?: string
+	}
+
+	const messages = ref<Message[]>([
+		{ id: 't1', type: 'time', content: '14:28' },
+		{
+			id: 'm1',
+			type: 'incoming',
+			content: '在吗？明天一起吃饭呀',
+			avatarText: '林',
+			avatarColor: '#FF9500'
+		},
+		{ id: 'm2', type: 'outgoing', content: '好呀，几点？' },
+		{
+			id: 'm3',
+			type: 'incoming',
+			content: '老地方，6点见？',
+			avatarText: '林',
+			avatarColor: '#FF9500'
+		},
+		{ id: 'm4', type: 'outgoing', content: '没问题，到时见～' },
+		{
+			id: 'm5',
+			type: 'redpacket',
+			content: '恭喜发财，大吉大利',
+			amount: '88.88',
+			avatarText: '林',
+			avatarColor: '#FF9500'
+		},
+		{
+			id: 'm6',
+			type: 'transfer',
+			content: '给你转了一笔钱',
+			amount: '200.00',
+			avatarText: '林',
+			avatarColor: '#FF9500'
+		}
+	])
+
+	const goBack = () => {
+		uni.navigateBack({ animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+	const onMore = () => {
+		uni.navigateTo({ url: '/pages/chat-detail/chat-detail' })
+	}
+
+	const onVoice = () => {
+		uni.showToast({ title: '语音输入', icon: 'none' })
+	}
+
+	const onMoreAction = () => {
+		uni.showActionSheet({
+			itemList: ['照片', '位置', '发红包', '转账', '聊天记录'],
+			success: (res) => {
+				if (res.tapIndex === 0) {
+					uni.navigateTo({ url: '/pages/media-preview/media-preview' })
+				} else if (res.tapIndex === 1) {
+					uni.navigateTo({ url: '/pages/location-pick/location-pick' })
+				} else if (res.tapIndex === 2) {
+					uni.navigateTo({ url: '/pages/red-packet-send/red-packet-send' })
+				} else if (res.tapIndex === 3) {
+					uni.navigateTo({ url: '/pages/transfer/transfer' })
+				} else if (res.tapIndex === 4) {
+					uni.navigateTo({ url: '/pages/chat-search/chat-search' })
+				}
+			}
+		})
+	}
+
+	const onRedPacketTap = () => {
+		uni.navigateTo({ url: '/pages/red-packet-detail/red-packet-detail' })
+	}
+
+	const onTransferTap = () => {
+		uni.navigateTo({ url: '/pages/transfer-pending/transfer-pending' })
+	}
+
+	const sendMessage = (text: string) => {
+		if (text.length === 0) return
+		const message: Message = {
+			id: `m${Date.now()}`,
+			type: 'outgoing',
+			content: text
+		}
+		messages.value.push(message)
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F0F0F0;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.more-icon {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 8px;
+	}
+
+	.dot {
+		width: 4px;
+		height: 4px;
+		background-color: #333;
+		border-radius: 50%;
+		margin: 0 1.5px;
+	}
+
+	/* 消息列表 */
+	.message-scroll {
+		flex: 1;
+		background-color: #F0F0F0;
+		padding: 12px 0;
+	}
+
+	.message-list {
+		padding: 0 12px;
+	}
+
+	.message-row {
+		display: flex;
+		flex-direction: row;
+		align-items: flex-start;
+		margin-bottom: 16px;
+	}
+
+	.message-row.time {
+		justify-content: center;
+	}
+
+	.message-row.incoming {
+		justify-content: flex-start;
+	}
+
+	.message-row.outgoing {
+		justify-content: flex-end;
+	}
+
+	.time-badge {
+		background-color: #DADADA;
+		border-radius: 4px;
+		padding: 3px 6px;
+		margin: 4px 0;
+	}
+
+	.time-text {
+		font-size: 11px;
+		color: #FFFFFF;
+	}
+
+	.message-avatar {
+		width: 40px;
+		height: 40px;
+		border-radius: 6px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-right: 10px;
+		flex-shrink: 0;
+	}
+
+	.message-avatar-text {
+		font-size: 15px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.message-bubble {
+		max-width: 280px;
+		padding: 10px 12px;
+		border-radius: 6px;
+		position: relative;
+	}
+
+	.bubble-white {
+		background-color: #FFFFFF;
+	}
+
+	.bubble-green {
+		background-color: #95EC69;
+	}
+
+	.message-text {
+		font-size: 15px;
+		color: #000;
+		line-height: 1.4;
+	}
+
+	/* 红包气泡 */
+	.rp-bubble {
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.rp-inner {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 10px 12px;
+	}
+
+	.rp-envelope {
+		width: 26px;
+		height: 30px;
+		background-color: #EE2C2C;
+		border-radius: 3px;
+		margin-right: 10px;
+		position: relative;
+		flex-shrink: 0;
+	}
+
+	.envelope-text {
+		color: #F4C043;
+		font-size: 14px;
+		font-weight: 700;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.rp-col {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.rp-text {
+		font-size: 15px;
+		color: #333;
+	}
+
+	.rp-tip {
+		font-size: 11px;
+		color: #999;
+		margin-top: 2px;
+	}
+
+	.rp-amount {
+		font-size: 15px;
+		color: #EE2C2C;
+		font-weight: 600;
+		margin-left: 8px;
+	}
+
+	/* 转账气泡 */
+	.tf-bubble {
+	}
+
+	.tf-inner {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.tf-title {
+		font-size: 14px;
+		color: #333;
+		margin-right: 16px;
+	}
+
+	.tf-amount {
+		font-size: 17px;
+		color: #333;
+		font-weight: 700;
+	}
+</style>

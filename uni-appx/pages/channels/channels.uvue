@@ -1,0 +1,290 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <text class="nav-title">视频号</text>
+      <view class="nav-actions">
+        <text class="search-link" @click="onSearch">搜索</text>
+        <view class="more-icon" @click="onMore">
+          <text class="dot"></text>
+          <text class="dot"></text>
+          <text class="dot"></text>
+        </view>
+      </view>
+    </view>
+    <view class="tab-bar">
+      <view
+        class="tab-item"
+        :class="{ active: activeTab === 'follow' }"
+        @click="switchTab('follow')"
+      >
+        <text class="tab-text">关注</text>
+        <view class="tab-line" v-if="activeTab === 'follow'"></view>
+      </view>
+      <view
+        class="tab-item"
+        :class="{ active: activeTab === 'recommend' }"
+        @click="switchTab('recommend')"
+      >
+        <text class="tab-text">推荐</text>
+        <view class="tab-line" v-if="activeTab === 'recommend'"></view>
+      </view>
+    </view>
+    <scroll-view scroll-y="true" class="video-list">
+      <view
+        class="video-card"
+        v-for="(item, idx) in videos"
+        :key="idx"
+        @click="onPlay(item)"
+      >
+        <view class="cover">
+          <view class="play-icon"></view>
+        </view>
+        <view class="author-row">
+          <view class="avatar"></view>
+          <text class="author-name">{{ item.author }}</text>
+        </view>
+        <text class="video-desc">{{ item.desc }}</text>
+        <view class="action-row" v-if="item.likes > 0 || item.comments > 0">
+          <text class="action-text" @click.stop="onLike">赞 {{ item.likes }}</text>
+          <text class="action-text" @click.stop="onComment">评论 {{ item.comments }}</text>
+          <text class="action-text" @click.stop="onShare">分享</text>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+
+const activeTab = ref<string>('follow')
+
+type VideoItem = {
+  author: string
+  desc: string
+  likes: number
+  comments: number
+}
+
+const videos = ref<VideoItem[]>([
+  {
+    author: '林晚',
+    desc: '周末去成都东站接朋友，顺便吃了顿火锅～',
+    likes: 128,
+    comments: 32
+  },
+  {
+    author: '林晚',
+    desc: '今天的晚霞也太好看了吧',
+    likes: 0,
+    comments: 0
+  }
+])
+
+const goBack = () => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const switchTab = (tab: string) => {
+  activeTab.value = tab
+}
+
+const onSearch = () => {
+  uni.showToast({ title: '搜索视频号', icon: 'none' })
+}
+
+const onMore = () => {
+  uni.showToast({ title: '更多', icon: 'none' })
+}
+
+const onPlay = (item: VideoItem) => {
+  uni.showToast({ title: '播放：' + item.desc, icon: 'none' })
+}
+
+const onLike = () => {
+  uni.showToast({ title: '已点赞', icon: 'success' })
+}
+
+const onComment = () => {
+  uni.showToast({ title: '评论', icon: 'none' })
+}
+
+const onShare = () => {
+  uni.showToast({ title: '分享', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  width: 100%;
+  height: 44px;
+  background: #FFFFFF;
+}
+
+.nav-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  background: #FFFFFF;
+}
+
+.nav-title {
+  color: #000;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.nav-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.search-link {
+  color: #000;
+  font-size: 14px;
+  margin-right: 16px;
+}
+
+.more-icon {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 20px;
+  height: 16px;
+}
+
+.dot {
+  width: 4px;
+  height: 4px;
+  background: #000;
+  border-radius: 50%;
+}
+
+.tab-bar {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  height: 40px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #F0F0F0;
+}
+
+.tab-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  height: 40px;
+  position: relative;
+}
+
+.tab-text {
+  color: #999;
+  font-size: 15px;
+}
+
+.tab-item.active .tab-text {
+  color: #000;
+  font-weight: 600;
+}
+
+.tab-line {
+  position: absolute;
+  bottom: 4px;
+  width: 30px;
+  height: 3px;
+  background: #07C160;
+  border-radius: 2px;
+}
+
+.video-list {
+  flex: 1;
+  padding: 8px;
+}
+
+.video-card {
+  background: #FFFFFF;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 8px;
+}
+
+.cover {
+  width: 100%;
+  height: 200px;
+  background: #E0E0E0;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.play-icon {
+  width: 0;
+  height: 0;
+  border-left: 18px solid #FFFFFF;
+  border-top: 12px solid transparent;
+  border-bottom: 12px solid transparent;
+  margin-left: 6px;
+  opacity: 0.85;
+}
+
+.author-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 0 4px;
+  margin-bottom: 6px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  background: #D8D8D8;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.author-name {
+  color: #000;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.video-desc {
+  color: #333;
+  font-size: 14px;
+  padding: 0 4px;
+  margin-bottom: 8px;
+}
+
+.action-row {
+  display: flex;
+  flex-direction: row;
+  padding: 4px;
+}
+
+.action-text {
+  color: #000;
+  font-size: 13px;
+  margin-right: 24px;
+}
+</style>

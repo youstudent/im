@@ -1,0 +1,79 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 4 个 tab 视图：首次进入按需创建（v-if），切换用 v-show 保留各 tab 状态 -->
+		<view class="tab-stage">
+			<view class="tab-view" v-show="activeTab === 'chat'">
+				<tab-chat></tab-chat>
+			</view>
+			<view class="tab-view" v-if="tabLoaded.contacts" v-show="activeTab === 'contacts'">
+				<tab-contacts></tab-contacts>
+			</view>
+			<view class="tab-view" v-if="tabLoaded.discover" v-show="activeTab === 'discover'">
+				<tab-discover></tab-discover>
+			</view>
+			<view class="tab-view" v-if="tabLoaded.me" v-show="activeTab === 'me'">
+				<tab-me></tab-me>
+			</view>
+		</view>
+
+		<!-- 底部 Tab 栏 -->
+		<tab-bar :active-key="activeTab" @change="onTabChange"></tab-bar>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type TabState = {
+		chat: boolean
+		contacts: boolean
+		discover: boolean
+		me: boolean
+	}
+
+	const activeTab = ref<string>('chat')
+	const tabLoaded = ref<TabState>({
+		chat: true,
+		contacts: false,
+		discover: false,
+		me: false
+	})
+
+	const onTabChange = (key: string) => {
+		if (key === 'chat') tabLoaded.value.chat = true
+		if (key === 'contacts') tabLoaded.value.contacts = true
+		if (key === 'discover') tabLoaded.value.discover = true
+		if (key === 'me') tabLoaded.value.me = true
+		activeTab.value = key
+	}
+</script>
+
+<style scoped>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	.tab-stage {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.tab-view {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+</style>

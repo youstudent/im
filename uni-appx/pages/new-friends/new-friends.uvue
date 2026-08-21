@@ -1,0 +1,208 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 自定义导航栏 -->
+		<view class="nav-bar">
+			<view class="back-arrow" @click="goBack"></view>
+			<text class="nav-title">新的朋友</text>
+			<view class="add-btn" @click="onAddFriend">
+				<view class="add-i1"></view>
+				<view class="add-i2"></view>
+			</view>
+		</view>
+
+		<scroll-view class="scroll" scroll-y>
+			<view class="request-list">
+				<view class="request-item" v-for="item in requests" :key="item.id">
+					<view class="avatar" :style="{ backgroundColor: item.avatarColor }">
+						<text class="avatar-text">{{ item.avatarText }}</text>
+					</view>
+					<view class="request-body">
+						<text class="nickname">{{ item.name }}</text>
+						<text class="source">来自：{{ item.source }}</text>
+					</view>
+					<view
+						class="action-btn"
+						:style="{ backgroundColor: item.status === 'added' ? '#E5E5E5' : '#07C160' }"
+						@click="onAction(item)"
+					>
+						<text class="action-text" :style="{ color: item.status === 'added' ? '#999999' : '#FFFFFF' }">{{ item.status === 'added' ? '已添加' : '接受' }}</text>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type RequestItem = {
+		id: number
+		name: string
+		avatarText: string
+		avatarColor: string
+		source: string
+		status: 'pending' | 'added'
+	}
+
+	const requests = ref<RequestItem[]>([
+		{ id: 1, name: '王小明', avatarText: '王', avatarColor: '#F5A623', source: '群聊', status: 'pending' },
+		{ id: 2, name: '陈小雨', avatarText: '陈', avatarColor: '#4A90E2', source: '手机号搜索', status: 'pending' },
+		{ id: 3, name: '刘洋', avatarText: '刘', avatarColor: '#4A90E2', source: '二维码', status: 'pending' },
+		{ id: 4, name: '赵雷', avatarText: '赵', avatarColor: '#9B59B6', source: '名片分享', status: 'added' }
+	])
+
+	const goBack = () => {
+		uni.navigateBack({ animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+	const onAddFriend = () => {
+		uni.navigateTo({ url: '/pages/add-friend/add-friend', animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+	const onAction = (item: RequestItem) => {
+		if (item.status === 'added') {
+			uni.showToast({ title: '已经是好友', icon: 'none' })
+			return
+		}
+		item.status = 'added'
+		uni.showToast({ title: `已接受 ${item.name}`, icon: 'none' })
+	}
+</script>
+
+<style scoped>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #EDEDED;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #FFFFFF;
+	}
+
+	.nav-bar {
+		height: 44px;
+		background-color: #FFFFFF;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-arrow {
+		position: absolute;
+		left: 12px;
+		top: 50%;
+		transform: translateY(-50%) rotate(45deg);
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+	}
+
+	.add-btn {
+		position: absolute;
+		right: 14px;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 20px;
+		height: 20px;
+	}
+
+	.add-i1 {
+		position: absolute;
+		background-color: #333;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 18px;
+		height: 2px;
+	}
+
+	.add-i2 {
+		position: absolute;
+		background-color: #333;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 2px;
+		height: 18px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.scroll {
+		flex: 1;
+	}
+
+	.request-list {
+		background-color: #FFFFFF;
+	}
+
+	.request-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 12px 16px;
+		border-bottom: 1px solid #F0F0F0;
+	}
+
+	.avatar {
+		width: 44px;
+		height: 44px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-right: 12px;
+	}
+
+	.avatar-text {
+		font-size: 18px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.request-body {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.nickname {
+		font-size: 16px;
+		color: #333;
+		font-weight: 500;
+	}
+
+	.source {
+		font-size: 13px;
+		color: #999;
+		margin-top: 2px;
+	}
+
+	.action-btn {
+		width: 64px;
+		height: 32px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.action-text {
+		font-size: 14px;
+	}
+</style>

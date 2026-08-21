@@ -1,0 +1,241 @@
+<template>
+	<view class="voip-page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar" :style="{ height: statusBarHeight + 'px' }"></view>
+
+		<!-- 主内容区 -->
+		<view class="content">
+			<!-- 对方头像 -->
+			<view class="avatar-wrap">
+				<view class="avatar" :style="{ backgroundColor: avatarColor }">
+					<text class="avatar-text">{{ avatarText }}</text>
+				</view>
+			</view>
+
+			<!-- 昵称 -->
+			<text class="nickname">{{ nickname }}</text>
+
+			<!-- 邀请提示 -->
+			<text class="invite-tip">{{ nickname }} 邀请你{{ callType }}通话</text>
+		</view>
+
+		<!-- 底部按钮区 -->
+		<view class="bottom-actions">
+			<view class="action-btn decline-btn" @click="onDecline">
+				<view class="decline-icon">
+					<view class="i1"></view>
+					<view class="i2"></view>
+				</view>
+			</view>
+			<view class="action-btn accept-btn action-last" @click="onAccept">
+				<view class="accept-icon">
+					<view class="i1"></view>
+					<view class="i2"></view>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref, onMounted, computed } from 'vue'
+
+	const statusBarHeight = ref<number>(44)
+	const nickname = ref<string>('林晚')
+	const callType = ref<string>('视频') // '语音' | '视频'
+
+	const avatarText = computed<string>(() : string => {
+		return nickname.value.length > 0 ? nickname.value.substring(0, 1) : '?'
+	})
+
+	// 根据昵称生成固定颜色
+	const avatarColor = computed<string>(() : string => {
+		const colors = ['#4A90D9', '#E07856', '#5BBF6A', '#D4A15B', '#8B6BB3', '#CC5555']
+		let hash = 0
+		for (let i = 0; i < nickname.value.length; i++) {
+			const charCode = nickname.value.charCodeAt(i)
+			if (charCode != null) {
+				hash = ((hash << 5) - hash + charCode) | 0
+			}
+		}
+		return colors[Math.abs(hash) % colors.length]
+	})
+
+	onMounted(() => {
+		try {
+			const info = uni.getSystemInfoSync()
+			statusBarHeight.value = info.statusBarHeight || 44
+		} catch (e) {}
+
+		// 读取页面参数
+		const pages = getCurrentPages()
+		if (pages.length > 0) {
+			const curPage = pages[pages.length - 1] as UniPage
+			const options = curPage.options
+			const name = options['name']
+			const type = options['type']
+			if (name != null) {
+				nickname.value = name as string
+			}
+			if (type === 'voice') {
+				callType.value = '语音'
+			}
+		}
+	})
+
+	const onDecline = () => {
+		uni.navigateBack({})
+	}
+
+	const onAccept = () => {
+		uni.redirectTo({ url: '/pages/voip-calling/voip-calling?name=' + nickname.value })
+	}
+</script>
+
+<style scoped>
+	.voip-page {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: #1A1A1A;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.status-bar {
+		width: 100%;
+		background-color: #1A1A1A;
+	}
+
+	.content {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding-bottom: 80px;
+	}
+
+	.avatar-wrap {
+		margin-bottom: 24px;
+	}
+
+	.avatar {
+		width: 110px;
+		height: 110px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.avatar-text {
+		font-size: 40px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.nickname {
+		font-size: 22px;
+		color: #FFFFFF;
+		font-weight: 500;
+		margin-bottom: 10px;
+	}
+
+	.invite-tip {
+		font-size: 14px;
+		color: #999999;
+	}
+
+	.bottom-actions {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		padding-bottom: 60px;
+	}
+
+	.action-btn {
+		width: 64px;
+		height: 64px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+	}
+
+	.decline-btn {
+		background-color: #FA5151;
+		margin-right: 70px;
+	}
+
+	.accept-btn {
+		background-color: #07C160;
+	}
+
+	.action-last {
+		margin-right: 0;
+	}
+
+	/* 拒绝图标：X */
+	.decline-icon {
+		width: 24px;
+		height: 24px;
+		position: relative;
+	}
+
+	.decline-icon .i1 {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		width: 22px;
+		height: 2.5px;
+		background-color: #FFFFFF;
+		border-radius: 2px;
+		transform: translate(-50%, -50%) rotate(45deg);
+	}
+
+	.decline-icon .i2 {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		width: 22px;
+		height: 2.5px;
+		background-color: #FFFFFF;
+		border-radius: 2px;
+		transform: translate(-50%, -50%) rotate(-45deg);
+	}
+
+	/* 接听图标：✓ */
+	.accept-icon {
+		width: 26px;
+		height: 16px;
+		position: relative;
+	}
+
+	.accept-icon .i1 {
+		position: absolute;
+		left: 2px;
+		bottom: 2px;
+		width: 7px;
+		height: 13px;
+		border-right: 3px solid #FFFFFF;
+		border-bottom: 3px solid #FFFFFF;
+		transform: rotate(45deg);
+	}
+
+	.accept-icon .i2 {
+		position: absolute;
+		left: 8px;
+		bottom: 2px;
+		width: 14px;
+		height: 3px;
+		background-color: #FFFFFF;
+		transform: rotate(-12deg);
+		border-radius: 2px;
+	}
+</style>

@@ -1,0 +1,347 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">聊天详情</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<!-- 用户信息 -->
+			<view class="profile-card" @click="onProfile">
+				<view class="large-avatar" :style="{ backgroundColor: avatarColor }">
+					<text class="large-avatar-text">{{ avatarText }}</text>
+				</view>
+				<view class="profile-info">
+					<text class="profile-name">{{ name }}</text>
+					<text class="profile-id">微信号：{{ wechatId }}</text>
+				</view>
+				<view class="arrow"></view>
+			</view>
+
+			<!-- 操作按钮 -->
+			<view class="action-bar">
+				<view class="action-btn primary" @click="onSendMessage">
+					<text class="action-text primary">发消息</text>
+				</view>
+				<view class="action-btn outline" @click="onCall">
+					<text class="action-text outline">音视频通话</text>
+				</view>
+			</view>
+
+			<!-- 菜单组 -->
+			<view class="menu-group">
+				<view class="menu-item menu-item-last" @click="onChatBackground">
+					<view class="menu-icon dark"></view>
+					<text class="menu-name">聊天背景</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+
+			<view class="menu-group danger">
+				<view class="menu-item danger-item" @click="onClearHistory">
+					<text class="menu-name danger">清空聊天记录</text>
+				</view>
+				<view class="menu-item danger-item menu-item-last" @click="onDeleteChat">
+					<text class="menu-name danger">删除聊天</text>
+				</view>
+			</view>
+
+			<view class="menu-group">
+				<view class="menu-item menu-item-last" @click="onSearchChat">
+					<view class="menu-icon dark"></view>
+					<text class="menu-name">查找聊天内容</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+
+			<view class="menu-group">
+				<view class="menu-item switch-item">
+					<text class="menu-name">消息免打扰</text>
+					<switch :checked="doNotDisturb" color="#07C160" @change="doNotDisturb = !doNotDisturb" />
+				</view>
+				<view class="menu-item switch-item">
+					<text class="menu-name">置顶聊天</text>
+					<switch :checked="sticky" color="#07C160" @change="sticky = !sticky" />
+				</view>
+			<view class="menu-item switch-item menu-item-last">
+				<text class="menu-name">消息提醒</text>
+					<switch :checked="notify" color="#07C160" @change="notify = !notify" />
+				</view>
+			</view>
+		</scroll-view>
+
+		<chat-bg :visible="showBg" @close="showBg = false"></chat-bg>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	const name = ref<string>('林晚')
+	const wechatId = ref<string>('lin_wan')
+	const avatarText = ref<string>('林')
+	const avatarColor = ref<string>('#333333')
+
+	const doNotDisturb = ref<boolean>(true)
+	const sticky = ref<boolean>(false)
+	const notify = ref<boolean>(true)
+
+	const showBg = ref<boolean>(false)
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onProfile = () => {
+		uni.navigateTo({ url: '/pages/contact-detail/contact-detail' })
+	}
+
+	const onSendMessage = () => {
+		uni.navigateTo({ url: '/pages/chat/chat' })
+	}
+
+	const onCall = () => {
+		uni.navigateTo({ url: '/pages/voip-calling/voip-calling' })
+	}
+
+	const onChatBackground = () => {
+		showBg.value = true
+	}
+
+	const onClearHistory = () => {
+		uni.showModal({
+			title: '提示',
+			content: '确定清空聊天记录？',
+			success: (res) => {
+				if (res.confirm) {
+					uni.showToast({ title: '已清空', icon: 'none' })
+				}
+			}
+		})
+	}
+
+	const onDeleteChat = () => {
+		uni.showModal({
+			title: '提示',
+			content: '确定删除聊天？',
+			success: (res) => {
+				if (res.confirm) {
+					uni.showToast({ title: '已删除', icon: 'none' })
+				}
+			}
+		})
+	}
+
+	const onSearchChat = () => {
+		uni.navigateTo({ url: '/pages/chat-search/chat-search' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	.profile-card {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 20px 16px;
+		background-color: #FFFFFF;
+		margin-bottom: 12px;
+	}
+
+	.large-avatar {
+		width: 64px;
+		height: 64px;
+		border-radius: 10px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-right: 16px;
+		flex-shrink: 0;
+	}
+
+	.large-avatar-text {
+		font-size: 26px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.profile-info {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	}
+
+	.profile-name {
+		font-size: 18px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.profile-id {
+		font-size: 13px;
+		color: #999;
+		margin-top: 6px;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+		margin-left: 4px;
+	}
+
+	/* 操作按钮 */
+	.action-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		padding: 0 16px 16px;
+		background-color: #FFFFFF;
+		margin-bottom: 12px;
+	}
+
+	.action-btn {
+		flex: 1;
+		height: 44px;
+		border-radius: 6px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.action-btn.primary {
+		background-color: #07C160;
+		margin-right: 12px;
+	}
+
+	.action-btn.outline {
+		border: 1px solid #07C160;
+	}
+
+	.action-text {
+		font-size: 16px;
+		font-weight: 500;
+	}
+
+	.action-text.primary {
+		color: #FFFFFF;
+	}
+
+	.action-text.outline {
+		color: #07C160;
+	}
+
+	/* 菜单组 */
+	.menu-group {
+		background-color: #FFFFFF;
+		margin-bottom: 12px;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+		box-sizing: border-box;
+	}
+
+	.menu-item-last {
+		border-bottom: none;
+	}
+
+	.menu-icon {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		margin-right: 10px;
+		flex-shrink: 0;
+	}
+
+	.menu-icon.dark {
+		background-color: #333;
+	}
+
+	.menu-name {
+		flex: 1;
+		font-size: 16px;
+		color: #000;
+	}
+
+	.switch-item {
+		justify-content: space-between;
+	}
+
+	.danger {
+		background-color: #FFFFFF;
+	}
+
+	.danger-item {
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.menu-name.danger {
+		color: #FF3B30;
+	}
+</style>

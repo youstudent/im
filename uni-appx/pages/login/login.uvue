@@ -1,0 +1,346 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<view class="container">
+			<!-- Logo 区域 -->
+			<view class="logo-wrap">
+				<view class="logo">
+					<view class="face">
+						<view class="eyes">
+							<view class="eye"></view>
+							<view class="eye"></view>
+						</view>
+						<view class="mouth"></view>
+					</view>
+				</view>
+				<text class="app-name">WorkChat</text>
+			</view>
+
+			<!-- 表单区域 -->
+			<view class="form">
+				<view class="input-row">
+					<text class="prefix">+86</text>
+					<input
+						class="input" adjust-position="false"
+						type="number"
+						v-model="phone"
+						placeholder="请输入手机号"
+						placeholder-class="placeholder"
+						maxlength="11"
+					/>
+				</view>
+				<view class="input-row">
+					<input
+						class="input" adjust-position="false"
+						type="password"
+						v-model="password"
+						placeholder="请输入密码"
+						placeholder-class="placeholder"
+					/>
+					<text class="link" @click="onForgot">忘记密码？</text>
+				</view>
+
+				<button class="btn-primary" @click="onLogin">登录</button>
+
+				<view class="switch-row">
+					<text class="switch-label">新用户？</text>
+					<text class="link" @click="goRegister">注册</text>
+				</view>
+			</view>
+
+			<!-- 协议勾选：整行可点击切换 -->
+			<view class="agreement" @click="toggleAgreed">
+				<view class="checkbox" :class="{ checked: agreed }">
+					<text v-if="agreed" class="check-icon">✓</text>
+				</view>
+				<text class="agreement-text">已阅读并同意</text>
+				<text class="agreement-link" @click.stop="openAgreement">《软件许可及服务协议》</text>
+				<text class="agreement-text">和</text>
+				<text class="agreement-link" @click.stop="openPrivacy">《隐私政策》</text>
+			</view>
+
+			<!-- 底部链接 -->
+			<view class="footer">
+				<text class="footer-link" @click="onMore">更多</text>
+				<text class="footer-link" @click="onSwitchAccount">切换账号</text>
+				<text class="footer-link" @click="onSecurity">chat安全中心</text>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	// 模拟账号（演示用）
+	const phone = ref<string>('13800138000')
+	const password = ref<string>('123456')
+	const agreed = ref<boolean>(true)
+
+	const toggleAgreed = () => {
+		agreed.value = !agreed.value
+	}
+
+	const onLogin = () => {
+		if (phone.value.trim().length === 0) {
+			uni.showToast({ title: '请输入手机号', icon: 'none' })
+			return
+		}
+		if (password.value.length === 0) {
+			uni.showToast({ title: '请输入密码', icon: 'none' })
+			return
+		}
+		if (!agreed.value) {
+			uni.showToast({ title: '请先同意协议', icon: 'none' })
+			return
+		}
+		// 登录成功，进入应用首页
+	uni.reLaunch({ url: '/pages/chat-list/chat-list' })
+	}
+
+	const onForgot = () => {
+		uni.showToast({ title: '忘记密码', icon: 'none' })
+	}
+
+	const goRegister = () => {
+		uni.navigateTo({ url: '/pages/register/register' })
+	}
+
+	const openAgreement = () => {
+		uni.showToast({ title: '打开服务协议', icon: 'none' })
+	}
+
+	const openPrivacy = () => {
+		uni.showToast({ title: '打开隐私政策', icon: 'none' })
+	}
+
+	const onMore = () => {
+		uni.showToast({ title: '更多', icon: 'none' })
+	}
+
+	const onSwitchAccount = () => {
+		uni.showToast({ title: '切换账号', icon: 'none' })
+	}
+
+	const onSecurity = () => {
+		uni.showToast({ title: 'chat安全中心', icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F7F7F7;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+	}
+
+	.container {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		padding: 0 32px;
+	}
+
+	/* Logo 区域 */
+	.logo-wrap {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		margin-top: 100px;
+		margin-bottom: 56px;
+	}
+
+	.logo {
+		width: 90px;
+		height: 90px;
+		background-color: #07C160;
+		border-radius: 24px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.face {
+		position: relative;
+		width: 54px;
+		height: 46px;
+	}
+
+	.eyes {
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+		width: 38px;
+		margin: 0 auto;
+	}
+
+	.eye {
+		width: 8px;
+		height: 8px;
+		background-color: #fff;
+		border-radius: 50%;
+	}
+
+	.mouth {
+		position: absolute;
+		bottom: 0;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 36px;
+		height: 18px;
+		border-bottom: 4px solid #fff;
+		border-radius: 0 0 18px 18px;
+	}
+
+	.app-name {
+		margin-top: 16px;
+		font-size: 24px;
+		color: #07C160;
+		font-weight: 600;
+	}
+
+	/* 表单区域 */
+	.form {
+		width: 100%;
+	}
+
+	.input-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		width: 100%;
+		height: 52px;
+		background-color: #fff;
+		border-radius: 12px;
+		padding: 0 16px;
+		margin-bottom: 16px;
+		box-sizing: border-box;
+		border: 1px solid #F0F0F0;
+	}
+
+	.prefix {
+		font-size: 16px;
+		color: #333;
+		margin-right: 12px;
+		font-weight: 500;
+	}
+
+	.input {
+		flex: 1;
+		height: 100%;
+		font-size: 16px;
+		color: #333;
+		border: none;
+		background-color: transparent;
+	}
+
+	.placeholder {
+		color: #BBBBBB;
+		font-size: 16px;
+	}
+
+	.link {
+		font-size: 14px;
+		color: #07C160;
+	}
+
+	.btn-primary {
+		width: 100%;
+		height: 50px;
+		line-height: 50px;
+		background-color: #07C160;
+		color: #fff;
+		font-size: 18px;
+		border-radius: 10px;
+		text-align: center;
+		margin-top: 24px;
+		border: none;
+		padding: 0;
+	}
+
+	.btn-primary::after {
+		border: none;
+	}
+
+	.switch-row {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		margin-top: 20px;
+	}
+
+	.switch-label {
+		font-size: 14px;
+		color: #666;
+	}
+
+	/* 协议勾选 */
+	.agreement {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		align-items: center;
+		flex-wrap: wrap;
+		margin-top: auto;
+		margin-bottom: 16px;
+		padding-top: 24px;
+		padding-left: 8px;
+		padding-right: 8px;
+		padding-bottom: 8px;
+	}
+
+	.checkbox {
+		width: 16px;
+		height: 16px;
+		border: 1px solid #999;
+		border-radius: 3px;
+		margin-right: 6px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.checkbox.checked {
+		background-color: #07C160;
+		border-color: #07C160;
+	}
+
+	.check-icon {
+		color: #fff;
+		font-size: 11px;
+		font-weight: bold;
+		line-height: 1;
+	}
+
+	.agreement-text {
+		font-size: 12px;
+		color: #999;
+	}
+
+	.agreement-link {
+		font-size: 12px;
+		color: #07C160;
+	}
+
+	/* 底部链接 */
+	.footer {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		margin-bottom: 24px;
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.footer-link {
+		font-size: 13px;
+		color: #576B95;
+		margin: 0 12px;
+	}
+</style>

@@ -1,0 +1,143 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="back-icon" @click="goBack"></view>
+      <text class="nav-title">银行卡</text>
+    </view>
+
+    <view class="content">
+      <!-- 招商银行 红卡 -->
+      <view class="bank-card bank-card-cmb" @click="onCardTap">
+        <text class="bank-name">招商银行</text>
+        <text class="bank-type">储蓄卡</text>
+        <text class="bank-number">**** **** **** 8821</text>
+      </view>
+
+      <!-- 建设银行 蓝卡 -->
+      <view class="bank-card bank-card-ccb" @click="onCardTap">
+        <text class="bank-name">建设银行</text>
+        <text class="bank-type">信用卡</text>
+        <text class="bank-number">**** **** **** 4066</text>
+      </view>
+
+      <!-- 添加卡片 -->
+      <view class="add-card" @click="onAddCard">
+        <text class="add-card-text">+ 添加银行卡</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onCardTap = () => {
+  uni.showToast({ title: '银行卡详情', icon: 'none' })
+}
+
+const onAddCard = () => {
+  uni.showToast({ title: '添加银行卡', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  height: 44px;
+  background: #F7F7F7;
+}
+
+.nav-bar {
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  background: #F7F7F7;
+  position: relative;
+}
+
+.back-icon {
+  width: 11px;
+  height: 11px;
+  border-left: 2px solid #333;
+  border-bottom: 2px solid #333;
+  transform: rotate(45deg);
+}
+
+.nav-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #333;
+  flex: 1;
+  text-align: center;
+  margin-right: 20px;
+}
+
+.content {
+  padding: 0 16px;
+}
+
+.bank-card {
+  width: 100%;
+  height: 180px;
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.bank-card-cmb {
+  background: #E5454A;
+}
+
+.bank-card-ccb {
+  background: #3A6FE0;
+}
+
+.bank-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-bottom: 8px;
+}
+
+.bank-type {
+  font-size: 12px;
+  color: #FFFFFF;
+  opacity: 0.9;
+  margin-bottom: 36px;
+}
+
+.bank-number {
+  font-size: 22px;
+  font-weight: 700;
+  color: #FFFFFF;
+  letter-spacing: 2px;
+  font-family: "Courier New", monospace;
+}
+
+.add-card {
+  background: #FFFFFF;
+  border-radius: 8px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.add-card-text {
+  font-size: 15px;
+  color: #07C160;
+  font-weight: 500;
+}
+</style>

@@ -1,0 +1,165 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">关于微信</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<!-- Logo 区域 -->
+			<view class="logo-area">
+				<text class="logo-text">chat</text>
+				<text class="version-text">chat 8.0.50</text>
+			</view>
+
+			<!-- 菜单列表 -->
+			<view class="menu-group">
+				<view
+					class="menu-item"
+					v-for="(item, index) in menuList"
+					:key="item.key"
+					:class="{ 'menu-item-last': index === menuList.length - 1 }"
+					@click="onItemClick(item)"
+				>
+					<text class="menu-name">{{ item.name }}</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type MenuItem = {
+		key: string
+		name: string
+	}
+
+	const menuList = ref<MenuItem[]>([
+		{ key: 'features', name: '功能介绍' },
+		{ key: 'privacy_guide', name: '隐私保护指引' },
+		{ key: 'terms', name: '服务条款' },
+		{ key: 'opensource', name: '开源许可' },
+		{ key: 'system_notice', name: '系统通知' },
+		{ key: 'check_update', name: '检查新版本' }
+	])
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onItemClick = (item: MenuItem) => {
+		uni.showToast({ title: item.name, icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	/* Logo 区域 */
+	.logo-area {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 30px 20px 20px;
+	}
+
+	.logo-text {
+		font-size: 42px;
+		color: #07C160;
+		font-weight: bold;
+	}
+
+	.version-text {
+		font-size: 14px;
+		color: #999;
+		margin-top: 6px;
+	}
+
+	/* 菜单组 */
+	.menu-group {
+		background-color: #FFFFFF;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+		box-sizing: border-box;
+	}
+
+	.menu-item-last {
+		border-bottom: none;
+	}
+
+	.menu-name {
+		font-size: 16px;
+		color: #000;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+	}
+</style>

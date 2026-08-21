@@ -1,0 +1,78 @@
+<template>
+	<view class="alpha-index" v-if="visible">
+		<view
+			class="alpha-item"
+			v-for="(letter, index) in letters"
+			:key="index"
+			:class="{ active: activeLetter === letter }"
+			@click="onSelect(letter)"
+		>
+			<text class="alpha-text">{{ letter }}</text>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref, withDefaults } from 'vue'
+
+	const props = withDefaults(defineProps<{
+		visible ?: boolean
+		letters ?: string[]
+	}>(), {
+		visible: true,
+		letters: (): string[] => {
+			return ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','#']
+		}
+	})
+
+	const emit = defineEmits<{
+		select: [letter: string]
+	}>()
+
+	const activeLetter = ref<string>('')
+
+	const onSelect = (letter : string) => {
+		activeLetter.value = letter
+		emit('select', letter)
+		// 短暂高亮后恢复
+		setTimeout(() => {
+			activeLetter.value = ''
+		}, 300)
+	}
+</script>
+
+<style>
+	.alpha-index {
+		position: fixed;
+		right: 4px;
+		top: 50%;
+		transform: translateY(-50%);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		z-index: 100;
+		padding: 4px 0;
+		pointer-events: none;
+	}
+
+	.alpha-item {
+		width: 22px;
+		height: 18px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		pointer-events: auto;
+	}
+
+	.alpha-text {
+		font-size: 11px;
+		color: #888;
+		line-height: 1;
+	}
+
+	.alpha-item.active .alpha-text {
+		color: #07C160;
+		font-size: 14px;
+		font-weight: 600;
+	}
+</style>

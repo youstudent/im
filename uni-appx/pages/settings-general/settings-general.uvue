@@ -1,0 +1,159 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">通用</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<view class="menu-group">
+				<view
+					class="menu-item"
+					v-for="(item, index) in menuList"
+					:key="item.key"
+					:class="{ 'menu-item-last': index === menuList.length - 1 }"
+					@click="onItemClick(item)"
+				>
+					<text class="menu-name">{{ item.name }}</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type MenuItem = {
+		key: string
+		name: string
+	}
+
+	const menuList = ref<MenuItem[]>([
+		{ key: 'dark_mode', name: '深色模式' },
+		{ key: 'font_size', name: '字体大小' },
+		{ key: 'media_files', name: '照片、视频、文件和通话' },
+		{ key: 'chat_backup', name: '聊天记录迁移与备份' },
+		{ key: 'location', name: '后台定位' },
+		{ key: 'language', name: '多语言' },
+		{ key: 'storage', name: '存储空间' },
+		{ key: 'restore_chat', name: '恢复聊天记录' }
+	])
+
+	const goBack = () => {
+		uni.navigateBack({ animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+	const onItemClick = (item: MenuItem) => {
+		if (item.key === 'font_size') {
+			uni.navigateTo({ url: '/pages/settings-font-size/settings-font-size', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		if (item.key === 'chat_backup') {
+			uni.navigateTo({ url: '/pages/settings-backup/settings-backup', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		if (item.key === 'language') {
+			uni.navigateTo({ url: '/pages/settings-language/settings-language', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		if (item.key === 'storage') {
+			uni.navigateTo({ url: '/pages/settings-storage/settings-storage', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		uni.showToast({ title: item.name, icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	.menu-group {
+		background-color: #FFFFFF;
+		margin-top: 8px;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+		box-sizing: border-box;
+	}
+
+	/* 单 class 变体：最后一项去分隔线（uvue 禁 .menu-item.last 复合选择器） */
+	.menu-item-last {
+		border-bottom: none;
+	}
+
+	.menu-name {
+		font-size: 16px;
+		color: #000;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+	}
+</style>

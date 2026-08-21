@@ -1,0 +1,169 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">存储空间</text>
+		</view>
+		<scroll-view class="content" scroll-y>
+			<view class="usage-area">
+				<view class="circle">
+					<text class="circle-text">已用 3.2 GB</text>
+				</view>
+			</view>
+
+			<view class="card">
+				<view class="row" @click="onTap('聊天记录')">
+					<text class="row-text">聊天记录</text>
+					<text class="row-val">2.1 GB</text>
+				</view>
+				<view class="divider"></view>
+				<view class="row" @click="onTap('缓存')">
+					<text class="row-text">缓存</text>
+					<text class="row-val">0.8 GB</text>
+				</view>
+				<view class="divider"></view>
+				<view class="row" @click="onTap('其他')">
+					<text class="row-text">其他</text>
+					<text class="row-val">0.3 GB</text>
+				</view>
+			</view>
+
+			<view class="card" @click="onClearCache">
+				<view class="clear-row">
+					<text class="clear-text">清理缓存</text>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+
+const goBack = () => {
+	uni.navigateBack({ delta: 1 })
+}
+
+const onTap = (name: string) => {
+	uni.showToast({ title: name, icon: 'none' })
+}
+
+const onClearCache = () => {
+	uni.showModal({
+		title: '提示',
+		content: '确认清理缓存？',
+		confirmText: '清理',
+		success: (r) => {
+			if (r.confirm) {
+				uni.showToast({ title: '已清理', icon: 'success' })
+			}
+		}
+	})
+}
+</script>
+
+<style>
+.page {
+	flex: 1;
+	background-color: #F7F7F7;
+}
+
+.status-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+}
+
+.nav-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+	flex-direction: row;
+	align-items: center;
+	justify-content: center;
+	position: relative;
+}
+
+.back-icon {
+	position: absolute;
+	left: 16px;
+	width: 12px;
+	height: 12px;
+	border-left: 2px solid #333;
+	border-bottom: 2px solid #333;
+	transform: rotate(45deg);
+}
+
+.nav-title {
+	font-size: 17px;
+	font-weight: 600;
+	color: #000;
+}
+
+.content {
+	flex: 1;
+	padding: 0 0 24px 0;
+}
+
+.usage-area {
+	align-items: center;
+	justify-content: center;
+	padding: 32px 0 28px 0;
+}
+
+.circle {
+	width: 140px;
+	height: 140px;
+	border-radius: 70px;
+	background-color: #07C160;
+	align-items: center;
+	justify-content: center;
+}
+
+.circle-text {
+	color: #FFFFFF;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.card {
+	background-color: #FFFFFF;
+	border-radius: 8px;
+	margin: 0 12px 12px 12px;
+	overflow: hidden;
+}
+
+.row {
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 16px;
+	height: 52px;
+}
+
+.row-text {
+	font-size: 16px;
+	color: #333;
+}
+
+.row-val {
+	font-size: 14px;
+	color: #999;
+}
+
+.divider {
+	height: 1px;
+	background-color: #EEE;
+	margin-left: 16px;
+}
+
+.clear-row {
+	height: 52px;
+	align-items: center;
+	justify-content: center;
+}
+
+.clear-text {
+	font-size: 16px;
+	color: #07C160;
+}
+</style>

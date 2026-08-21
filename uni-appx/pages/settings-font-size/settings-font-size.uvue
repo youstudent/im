@@ -1,0 +1,171 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">字体大小</text>
+		</view>
+		<scroll-view class="content" scroll-y>
+			<view class="card">
+				<view class="preview">
+					<text class="preview-text">微信（预览文字）</text>
+				</view>
+				<view class="preview-line"></view>
+				<view class="slider-area">
+					<view class="slider-track" @click="onTrackClick">
+						<view class="slider-fill" :style="{ width: sliderPercent + '%' }"></view>
+						<view class="slider-thumb" :style="{ left: sliderPercent + '%' }"></view>
+					</view>
+					<view class="slider-labels">
+						<text class="label-small">A（小）</text>
+						<text class="label-mid">标准</text>
+						<text class="label-big">A（大）</text>
+					</view>
+					<text class="hint">拖动滑块调整字体大小，预览文字用于查看效果</text>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+
+const sliderPercent = ref<number>(50)
+
+const goBack = () => {
+	uni.navigateBack({ delta: 1 })
+}
+
+const onTrackClick = (e: any) => {
+	// 简化：根据点击区域估算
+	uni.showToast({ title: '标准', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+	flex: 1;
+	background-color: #F7F7F7;
+}
+
+.status-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+}
+
+.nav-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+	flex-direction: row;
+	align-items: center;
+	justify-content: center;
+	position: relative;
+}
+
+.back-icon {
+	position: absolute;
+	left: 16px;
+	width: 12px;
+	height: 12px;
+	border-left: 2px solid #333;
+	border-bottom: 2px solid #333;
+	transform: rotate(45deg);
+}
+
+.nav-title {
+	font-size: 17px;
+	font-weight: 600;
+	color: #000;
+}
+
+.content {
+	flex: 1;
+	padding: 0;
+}
+
+.card {
+	background-color: #FFFFFF;
+	border-radius: 0;
+	overflow: hidden;
+}
+
+.preview {
+	padding: 24px 16px 20px 16px;
+}
+
+.preview-text {
+	font-size: 20px;
+	font-weight: 700;
+	color: #000;
+}
+
+.preview-line {
+	height: 3px;
+	background-color: #07C160;
+	margin: 0 0 24px 0;
+}
+
+.slider-area {
+	padding: 0 16px 16px 16px;
+	background-color: #F7F7F7;
+}
+
+.slider-track {
+	height: 28px;
+	flex-direction: row;
+	align-items: center;
+	position: relative;
+	justify-content: flex-start;
+}
+
+.slider-fill {
+	position: absolute;
+	left: 0;
+	top: 13px;
+	height: 2px;
+	background-color: transparent;
+}
+
+.slider-thumb {
+	position: absolute;
+	top: 6px;
+	width: 16px;
+	height: 16px;
+	border-radius: 8px;
+	background-color: #FFFFFF;
+	border: 1px solid #DDD;
+	margin-left: -8px;
+}
+
+.slider-labels {
+	flex-direction: row;
+	justify-content: space-between;
+	align-items: center;
+	margin-top: 8px;
+	margin-bottom: 12px;
+}
+
+.label-small {
+	font-size: 12px;
+	color: #999;
+}
+
+.label-mid {
+	font-size: 14px;
+	color: #000;
+}
+
+.label-big {
+	font-size: 18px;
+	color: #000;
+	font-weight: 600;
+}
+
+.hint {
+	font-size: 12px;
+	color: #999;
+	line-height: 18px;
+	padding: 0 4px 12px 4px;
+}
+</style>

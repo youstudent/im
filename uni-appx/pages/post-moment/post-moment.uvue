@@ -1,0 +1,260 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 自定义导航栏 -->
+		<view class="nav-bar">
+			<view class="back-arrow" @click="goBack"></view>
+			<text class="nav-title">发表</text>
+			<text class="post-btn" @click="onPost">发表</text>
+		</view>
+
+		<scroll-view class="content" scroll-y>
+			<!-- 输入与图片区 -->
+			<view class="input-card">
+				<textarea
+					class="content-input"
+					v-model="content"
+					placeholder="这一刻的想法..."
+					placeholder-style="color: #B2B2B2"
+					maxlength="2000"
+					auto-height
+				/>
+
+				<view class="image-grid">
+					<view
+						class="grid-item placeholder"
+						v-for="(_, index) in imageList"
+						:key="index"
+					></view>
+					<view
+						class="grid-item add-btn"
+						v-if="imageList.length < 9"
+						@click="onAddImage"
+					>
+						<view class="plus-icon">
+						<view class="i1"></view>
+						<view class="i2"></view>
+					</view>
+					</view>
+				</view>
+			</view>
+
+			<!-- 功能菜单 -->
+			<view class="menu-card">
+				<view class="menu-item" @click="onMenuClick('所在位置')">
+					<text class="menu-text">所在位置</text>
+					<view class="arrow"></view>
+				</view>
+				<view class="menu-item" @click="onMenuClick('谁可以看')">
+					<view class="menu-left">
+						<text class="menu-text">公开</text>
+						<view class="arrow"></view>
+					</view>
+					<text class="menu-right">谁可以看</text>
+				</view>
+				<view class="menu-item menu-item-last" @click="onMenuClick('提醒谁看')">
+					<text class="menu-text">提醒谁看</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	const content = ref<string>('')
+	const imageList = ref<string[]>(['', '', ''])
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onPost = () => {
+		uni.showToast({ title: '发表成功', icon: 'none' })
+		setTimeout(() => {
+			uni.navigateBack()
+		}, 800)
+	}
+
+	const onAddImage = () => {
+		if (imageList.value.length < 9) {
+			imageList.value.push('')
+		}
+		uni.showToast({ title: '选择图片', icon: 'none' })
+	}
+
+	const onMenuClick = (name: string) => {
+		uni.showToast({ title: name, icon: 'none' })
+	}
+</script>
+
+<style scoped>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F7F7F7;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: center;
+		height: 44px;
+		padding: 0 12px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+		position: relative;
+	}
+
+	.back-arrow {
+		position: absolute;
+		left: 12px;
+		top: 50%;
+		transform: translateY(-50%) rotate(45deg);
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.post-btn {
+		position: absolute;
+		right: 12px;
+		top: 50%;
+		transform: translateY(-50%);
+		font-size: 16px;
+		color: #07C160;
+		font-weight: 500;
+		padding: 4px 8px;
+	}
+
+	.content {
+		flex: 1;
+	}
+
+	.input-card {
+		background-color: #FFFFFF;
+		padding: 12px 16px 16px;
+		margin-bottom: 8px;
+	}
+
+	.content-input {
+		width: 100%;
+		min-height: 120px;
+		font-size: 17px;
+		color: #333;
+		line-height: 24px;
+		padding: 0;
+		margin-bottom: 12px;
+	}
+
+	.image-grid {
+		display: flex;
+		flex-direction: row;
+		flex-wrap: wrap;
+	}
+
+	.grid-item {
+		width: 80px;
+		height: 80px;
+		border-radius: 4px;
+		margin-right: 8px;
+		margin-bottom: 8px;
+		box-sizing: border-box;
+	}
+
+	.placeholder {
+		background-color: #ECECEC;
+	}
+
+	.add-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid #D9D9D9;
+	}
+
+	.plus-icon {
+		width: 24px;
+		height: 24px;
+		position: relative;
+	}
+
+	.plus-icon .i1,
+	.plus-icon .i2 {
+		position: absolute;
+		background-color: #B2B2B2;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.plus-icon .i1 {
+		width: 20px;
+		height: 2px;
+	}
+
+	.plus-icon .i2 {
+		width: 2px;
+		height: 20px;
+	}
+
+	.menu-card {
+		background-color: #FFFFFF;
+		padding-left: 16px;
+	}
+
+	.menu-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+		padding-right: 16px;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.menu-item-last {
+		border-bottom: none;
+	}
+
+	.menu-left {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+	}
+
+	.menu-text {
+		font-size: 16px;
+		color: #000;
+	}
+
+	.menu-right {
+		font-size: 16px;
+		color: #000;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+		margin-left: 6px;
+	}
+</style>

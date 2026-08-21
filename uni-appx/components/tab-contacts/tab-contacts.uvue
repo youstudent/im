@@ -1,0 +1,484 @@
+<template>
+	<view class="page">
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="nav-left"></view>
+			<text class="nav-title">通讯录</text>
+			<view class="nav-right" @click="onAdd">
+				<view class="icon-plus">
+					<view class="nav-plus-i1"></view>
+					<view class="nav-plus-i2"></view>
+				</view>
+			</view>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y :scroll-into-view="scrollInto">
+			<!-- 搜索栏 -->
+			<view class="search-wrap">
+				<view class="search-bar" @click="onSearch">
+					<view class="search-icon">
+						<view class="search-icon-i2"></view>
+					</view>
+					<text class="search-text">搜索</text>
+				</view>
+			</view>
+
+			<!-- 功能入口 -->
+			<view class="func-list">
+				<view
+					class="func-item"
+					v-for="item in funcList"
+					:key="item.key"
+					@click="onFuncClick(item)"
+				>
+					<view class="func-icon" :class="`icon-${item.key}`">
+						<view class="i1" :class="`fi-${item.key}-i1`"></view>
+						<view class="i2" :class="`fi-${item.key}-i2`"></view>
+						<view v-if="item.key === 'new-friend'" class="fi-new-friend-plus">
+							<view class="fi-new-friend-plus-i2"></view>
+						</view>
+						<view v-if="item.key === 'group'" class="fi-group-plus"></view>
+					</view>
+					<text class="func-name">{{ item.name }}</text>
+				</view>
+			</view>
+
+			<!-- 联系人分组 -->
+			<view class="contact-groups">
+				<view
+					class="group"
+					v-for="group in contactGroups"
+					:key="group.letter"
+				>
+					<view class="group-header" :id="'group-' + group.letter">{{ group.letter }}</view>
+					<view class="group-items">
+						<view
+							class="contact-item"
+							v-for="contact in group.list"
+							:key="contact.id"
+							@click="onContactClick(contact)"
+						>
+							<view
+								class="avatar"
+								:style="{ backgroundColor: contact.avatarColor }"
+							>
+								<text class="avatar-text">{{ contact.avatarText }}</text>
+							</view>
+							<text class="contact-name">{{ contact.name }}</text>
+						</view>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+
+		<!-- 字母索引浮层 -->
+		<alpha-index @select="onAlphaSelect"></alpha-index>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type FuncItem = {
+		key: string
+		name: string
+	}
+
+	type Contact = {
+		id: string
+		name: string
+		avatarText: string
+		avatarColor: string
+	}
+
+	type ContactGroup = {
+		letter: string
+		list: Contact[]
+	}
+
+	const funcList = ref<FuncItem[]>([
+		{ key: 'new-friend', name: '新的朋友' },
+		{ key: 'group', name: '群聊' },
+		{ key: 'tag', name: '标签' },
+		{ key: 'official', name: '公众号' }
+	])
+
+	const contactGroups = ref<ContactGroup[]>([
+		{
+			letter: 'C',
+			list: [
+				{ id: 'c1', name: '陈晨', avatarText: '陈', avatarColor: '#07C160' }
+			]
+		},
+		{
+			letter: 'L',
+			list: [
+				{ id: 'l1', name: '林晚', avatarText: '林', avatarColor: '#FF9500' },
+				{ id: 'l2', name: '李娜', avatarText: '李', avatarColor: '#FF4D6A' }
+			]
+		},
+		{
+			letter: 'W',
+			list: [
+				{ id: 'w1', name: '王强', avatarText: '王', avatarColor: '#9B59B6' }
+			]
+		},
+		{
+			letter: 'Z',
+			list: [
+				{ id: 'z1', name: '张可', avatarText: '张', avatarColor: '#007AFF' }
+			]
+		}
+	])
+
+	const scrollInto = ref<string | null>(null)
+
+	const onSearch = () => {
+		uni.navigateTo({ url: '/pages/global-search/global-search', animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+	const onAlphaSelect = (letter: string) => {
+		scrollInto.value = 'group-' + letter
+		// 用后重置为 null，避免 scroll-into-view 持续绑定导致 App 端 scroll-view 滚动异常
+		setTimeout(() => {
+			scrollInto.value = null
+		}, 400)
+	}
+
+	const onAdd = () => {
+		uni.showToast({ title: '添加朋友', icon: 'none' })
+	}
+
+	const onFuncClick = (item: FuncItem) => {
+		if (item.key === 'new-friend') {
+			uni.navigateTo({ url: '/pages/new-friends/new-friends', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		if (item.key === 'group') {
+			uni.navigateTo({ url: '/pages/group-list/group-list', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		uni.showToast({ title: item.name, icon: 'none' })
+	}
+
+	const onContactClick = (contact: Contact) => {
+		uni.navigateTo({ url: '/pages/contact-detail/contact-detail', animationType: 'slide-in-right', animationDuration: 300 })
+	}
+</script>
+
+<style scoped>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 12px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.nav-left {
+		width: 32px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+		height: 32px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.icon-plus {
+		width: 22px;
+		height: 22px;
+		position: relative;
+	}
+
+	.nav-plus-i1 {
+		position: absolute;
+		background-color: #000;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 18px;
+		height: 2px;
+	}
+
+	.nav-plus-i2 {
+		position: absolute;
+		background-color: #000;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 2px;
+		height: 18px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	/* 搜索栏 */
+	.search-wrap {
+		background-color: #FFFFFF;
+		padding: 8px 12px;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.search-bar {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		align-items: center;
+		height: 36px;
+		background-color: #F5F5F5;
+		border-radius: 6px;
+	}
+
+	.search-icon {
+		width: 14px;
+		height: 14px;
+		border: 2px solid #999;
+		border-radius: 50%;
+		position: relative;
+		margin-right: 6px;
+	}
+
+	.search-icon-i2 {
+		position: absolute;
+		bottom: -3px;
+		right: -3px;
+		width: 6px;
+		height: 2px;
+		background-color: #999;
+		transform: rotate(45deg);
+		transform-origin: left center;
+	}
+
+	.search-text {
+		font-size: 14px;
+		color: #999;
+	}
+
+	/* 功能入口 */
+	.func-list {
+		background-color: #FFFFFF;
+		margin-bottom: 8px;
+	}
+
+	.func-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 12px 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.func-icon {
+		width: 36px;
+		height: 36px;
+		border-radius: 6px;
+		margin-right: 12px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		position: relative;
+	}
+
+	.func-name {
+		font-size: 16px;
+		color: #000;
+	}
+
+	/* 新的朋友 */
+	.icon-new-friend {
+		background-color: #FF9500;
+	}
+
+	.fi-new-friend-i1 {
+		width: 10px;
+		height: 10px;
+		border: 2px solid #fff;
+		border-radius: 50%;
+		margin-top: -4px;
+	}
+
+	.fi-new-friend-i2 {
+		width: 14px;
+		height: 6px;
+		border: 2px solid #fff;
+		border-bottom: none;
+		border-radius: 8px 8px 0 0;
+		margin-top: -2px;
+	}
+
+	.fi-new-friend-plus {
+		position: absolute;
+		width: 10px;
+		height: 2px;
+		background-color: #fff;
+		top: 6px;
+		right: 6px;
+	}
+
+	.fi-new-friend-plus-i2 {
+		position: absolute;
+		width: 2px;
+		height: 10px;
+		background-color: #fff;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	/* 群聊 */
+	.icon-group {
+		background-color: #07C160;
+	}
+
+	.fi-group-i1 {
+		width: 10px;
+		height: 10px;
+		border: 2px solid #fff;
+		border-radius: 50%;
+		position: absolute;
+		top: 5px;
+		left: 6px;
+	}
+
+	.fi-group-i2 {
+		width: 10px;
+		height: 10px;
+		border: 2px solid #fff;
+		border-radius: 50%;
+		position: absolute;
+		top: 5px;
+		right: 6px;
+	}
+
+	.fi-group-plus {
+		position: absolute;
+		width: 16px;
+		height: 7px;
+		border: 2px solid #fff;
+		border-bottom: none;
+		border-radius: 10px 10px 0 0;
+		bottom: 5px;
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	/* 标签 */
+	.icon-tag {
+		background-color: #007AFF;
+	}
+
+	.fi-tag-i1 {
+		width: 12px;
+		height: 12px;
+		border: 2px solid #fff;
+		border-radius: 50% 50% 50% 0;
+		transform: rotate(-45deg);
+	}
+
+	.fi-tag-i2 {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 4px;
+		height: 4px;
+		background-color: #fff;
+		border-radius: 50%;
+	}
+
+	/* 公众号 */
+	.icon-official {
+		background-color: #007AFF;
+	}
+
+	.fi-official-i1 {
+		width: 8px;
+		height: 8px;
+		border: 2px solid #fff;
+		border-radius: 50%;
+		margin-top: -3px;
+	}
+
+	.fi-official-i2 {
+		width: 14px;
+		height: 6px;
+		border: 2px solid #fff;
+		border-bottom: none;
+		border-radius: 8px 8px 0 0;
+		margin-top: -2px;
+	}
+
+	/* 联系人分组 */
+	.contact-groups {
+		background-color: #F5F5F5;
+	}
+
+	.group-header {
+		height: 28px;
+		line-height: 28px;
+		padding: 0 16px;
+		font-size: 13px;
+		color: #999;
+		background-color: #F5F5F5;
+	}
+
+	.group-items {
+		background-color: #FFFFFF;
+	}
+
+	.contact-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 10px 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.avatar {
+		width: 36px;
+		height: 36px;
+		border-radius: 6px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		margin-right: 12px;
+	}
+
+	.avatar-text {
+		font-size: 15px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.contact-name {
+		font-size: 16px;
+		color: #000;
+	}
+</style>

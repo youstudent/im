@@ -1,0 +1,228 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 自定义导航栏 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">发红包</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<view class="content">
+			<!-- 副标题 -->
+			<text class="subtitle">发给 林晚</text>
+
+			<!-- 金额卡片 -->
+			<view class="amount-card">
+				<view class="amount-row">
+					<text class="amount-symbol">¥</text>
+					<text class="amount-value">0.00</text>
+				</view>
+				<view class="divider"></view>
+				<text class="blessing">恭喜发财，大吉大利</text>
+			</view>
+
+			<!-- 塞钱按钮 -->
+			<view class="btn-wrap">
+				<view class="btn-primary" @click="onSendPacket">
+					<text class="btn-primary-text">塞钱进红包</text>
+				</view>
+			</view>
+
+			<!-- 支付方式 -->
+			<view class="pay-row" @click="onChangePay">
+				<text class="pay-label">支付方式</text>
+				<view class="pay-right">
+					<text class="pay-value">零钱</text>
+					<view class="arrow-right"></view>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+	uni.navigateBack({ delta: 1 })
+}
+
+const onSendPacket = () => {
+	uni.showToast({ title: '红包已发送', icon: 'success' })
+}
+
+const onChangePay = () => {
+	uni.showToast({ title: '切换支付方式', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+	width: 100%;
+	height: 100%;
+	background-color: #EE2C2C;
+	box-sizing: border-box;
+}
+
+/* 状态栏 */
+.status-bar {
+	height: 44px;
+	width: 100%;
+}
+
+/* 导航栏 */
+.nav-bar {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	height: 44px;
+	padding: 0 16px;
+	position: relative;
+}
+
+.back-icon {
+	width: 12px;
+	height: 12px;
+	border-left: 2px solid #FFFFFF;
+	border-bottom: 2px solid #FFFFFF;
+	transform: rotate(45deg);
+	margin-left: 6px;
+}
+
+.nav-title {
+	position: absolute;
+	left: 50%;
+	transform: translateX(-50%);
+	color: #FFFFFF;
+	font-size: 17px;
+	font-weight: 600;
+}
+
+.nav-right {
+	width: 24px;
+	height: 24px;
+}
+
+/* 内容区 */
+.content {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 0 16px;
+	margin-top: 16px;
+}
+
+.subtitle {
+	color: #FFFFFF;
+	font-size: 15px;
+	margin-top: 4px;
+	margin-bottom: 24px;
+}
+
+/* 金额卡片 */
+.amount-card {
+	width: 100%;
+	background-color: #FFFFFF;
+	border-radius: 12px;
+	padding: 32px 20px 20px;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+
+.amount-row {
+	display: flex;
+	flex-direction: row;
+	align-items: flex-end;
+	justify-content: center;
+	padding: 8px 0 24px;
+}
+
+.amount-symbol {
+	color: #B2B2B2;
+	font-size: 22px;
+	font-weight: 500;
+	margin-right: 4px;
+}
+
+.amount-value {
+	color: #333333;
+	font-size: 40px;
+	font-weight: 600;
+}
+
+.divider {
+	width: 100%;
+	height: 1px;
+	background-color: #E5E5E5;
+}
+
+.blessing {
+	color: #B2B2B2;
+	font-size: 14px;
+	margin-top: 16px;
+}
+
+/* 主按钮 */
+.btn-wrap {
+	width: 100%;
+	margin-top: 24px;
+}
+
+.btn-primary {
+	width: 100%;
+	height: 48px;
+	background-color: #F4C043;
+	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.btn-primary-text {
+	color: #5A3A0A;
+	font-size: 17px;
+	font-weight: 600;
+}
+
+/* 支付方式 */
+.pay-row {
+	margin-top: 24px;
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	padding: 4px 4px;
+}
+
+.pay-label {
+	color: #FFFFFF;
+	font-size: 15px;
+}
+
+.pay-right {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+}
+
+.pay-value {
+	color: #FFFFFF;
+	font-size: 15px;
+	margin-right: 6px;
+	opacity: 0.9;
+}
+
+.arrow-right {
+	width: 8px;
+	height: 8px;
+	border-top: 2px solid #FFFFFF;
+	border-right: 2px solid #FFFFFF;
+	transform: rotate(45deg);
+}
+</style>

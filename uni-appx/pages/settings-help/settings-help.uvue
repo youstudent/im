@@ -1,0 +1,203 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">帮助与反馈</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<!-- 搜索框 -->
+			<view class="search-box">
+				<view class="search-dot"></view>
+				<input class="search-input" placeholder="遇到问题？搜索" />
+			</view>
+
+			<!-- 常见问题 -->
+			<text class="section-title">常见问题</text>
+			<view class="faq-card">
+				<view
+					class="faq-item"
+					v-for="(item, index) in faqList"
+					:key="item.key"
+					:class="{ 'faq-item-last': index === faqList.length - 1 }"
+					@click="onItemClick(item)"
+				>
+					<text class="faq-text">{{ item.question }}</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+
+			<!-- 意见反馈按钮 -->
+			<view class="feedback-btn" @click="onFeedback">
+				<text class="feedback-btn-text">意见反馈</text>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type FaqItem = {
+		key: string
+		question: string
+	}
+
+	const faqList = ref<FaqItem[]>([
+		{ key: 'add_friend', question: '如何添加好友？' },
+		{ key: 'change_id', question: '怎么修改微信号？' },
+		{ key: 'recover_chat', question: '聊天记录怎么恢复？' },
+		{ key: 'pay_issue', question: '支付遇到问题怎么办？' }
+	])
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onItemClick = (item: FaqItem) => {
+		uni.showToast({ title: item.question, icon: 'none' })
+	}
+
+	const onFeedback = () => {
+		uni.showToast({ title: '意见反馈', icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	/* 搜索框 */
+	.search-box {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		height: 36px;
+		background-color: #FFFFFF;
+		border-radius: 4px;
+		margin: 12px 16px 0;
+		padding: 0 12px;
+	}
+
+	.search-dot {
+		width: 8px;
+		height: 8px;
+		background-color: #333;
+		border-radius: 50%;
+		margin-right: 8px;
+		flex-shrink: 0;
+	}
+
+	.search-input {
+		flex: 1;
+		font-size: 14px;
+		color: #333;
+	}
+
+	/* 区块标题 */
+	.section-title {
+		font-size: 13px;
+		color: #999;
+		margin: 16px 16px 8px;
+	}
+
+	/* FAQ 卡片 */
+	.faq-card {
+		background-color: #FFFFFF;
+		margin: 0 16px;
+		border-radius: 4px;
+	}
+
+	.faq-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		padding: 14px 16px;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.faq-item-last {
+		border-bottom: none;
+	}
+
+	.faq-text {
+		font-size: 15px;
+		color: #333;
+	}
+
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+	}
+
+	/* 反馈按钮 */
+	.feedback-btn {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		height: 46px;
+		background-color: #07C160;
+		border-radius: 6px;
+		margin: 24px 16px 0;
+	}
+
+	.feedback-btn-text {
+		font-size: 16px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+</style>

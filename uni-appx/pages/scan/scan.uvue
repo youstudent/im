@@ -1,0 +1,273 @@
+<template>
+	<view class="scan-page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar" :style="{ height: statusBarHeight + 'px' }"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-arrow" @click="goBack"></view>
+			<text class="nav-title">扫一扫</text>
+		</view>
+
+		<!-- 扫描区域 -->
+		<view class="scan-area">
+			<view class="scan-frame">
+				<view class="corner corner-tl"></view>
+				<view class="corner corner-tr"></view>
+				<view class="corner corner-bl"></view>
+				<view class="corner corner-br"></view>
+				<view class="scan-line"></view>
+			</view>
+			<text class="scan-tip">将二维码放入框内，即可自动扫描</text>
+		</view>
+
+		<!-- 底部操作 -->
+		<view class="action-bar">
+			<view class="action-item" @click="onLight">
+				<view class="action-icon icon-light">
+					<view class="i1"></view>
+					<view class="i2"></view>
+				</view>
+				<text class="action-label">轻触照亮</text>
+			</view>
+			<view class="action-item" @click="onAlbum">
+				<view class="action-icon icon-album">
+					<view class="i1"></view>
+					<view class="i2"></view>
+				</view>
+				<text class="action-label">相册</text>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref, onMounted } from 'vue'
+
+	const statusBarHeight = ref<number>(44)
+
+	onMounted(() => {
+		try {
+			const info = uni.getSystemInfoSync()
+			statusBarHeight.value = info.statusBarHeight || 44
+		} catch (e) {}
+	})
+
+	const goBack = () => {
+		uni.navigateBack({})
+	}
+
+	const onLight = () => {
+		uni.showToast({ title: '照亮', icon: 'none' })
+	}
+
+	const onAlbum = () => {
+		uni.showToast({ title: '从相册选择', icon: 'none' })
+	}
+</script>
+
+<style scoped>
+	.scan-page {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background-color: #000;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.status-bar {
+		width: 100%;
+		background-color: #000;
+	}
+
+	.nav-bar {
+		height: 44px;
+		background-color: #000;
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding-left: 12px;
+	}
+
+	.back-arrow {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #fff;
+		border-bottom: 2px solid #fff;
+		transform: rotate(45deg);
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #fff;
+		font-weight: 500;
+		margin-left: 12px;
+	}
+
+	.scan-area {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.scan-frame {
+		width: 250px;
+		height: 250px;
+		position: relative;
+	}
+
+	.corner {
+		position: absolute;
+		width: 24px;
+		height: 24px;
+		border-color: #07C160;
+		border-style: solid;
+	}
+
+	.corner-tl {
+		top: 0;
+		left: 0;
+		border-width: 3px 0 0 3px;
+		border-top-left-radius: 4px;
+	}
+
+	.corner-tr {
+		top: 0;
+		right: 0;
+		border-width: 3px 3px 0 0;
+		border-top-right-radius: 4px;
+	}
+
+	.corner-bl {
+		bottom: 0;
+		left: 0;
+		border-width: 0 0 3px 3px;
+		border-bottom-left-radius: 4px;
+	}
+
+	.corner-br {
+		bottom: 0;
+		right: 0;
+		border-width: 0 3px 3px 0;
+		border-bottom-right-radius: 4px;
+	}
+
+	.scan-line {
+		position: absolute;
+		top: 50%;
+		left: 10px;
+		right: 10px;
+		height: 2px;
+		background-color: #07C160;
+		transform: translateY(-50%);
+	}
+
+	.scan-tip {
+		font-size: 13px;
+		color: #B2B2B2;
+		margin-top: 24px;
+	}
+
+	.action-bar {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		padding-bottom: 60px;
+	}
+
+	.action-item {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		margin: 0 32px;
+	}
+
+	.action-icon {
+		width: 48px;
+		height: 48px;
+		border-radius: 50%;
+		background-color: rgba(255, 255, 255, 0.15);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+	}
+
+	.icon-light {
+		width: 20px;
+		height: 22px;
+		background-color: #fff;
+		border-radius: 50% 50% 4px 4px;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.icon-light .i1 {
+		position: absolute;
+		top: -6px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 8px;
+		height: 4px;
+		background-color: #fff;
+		border-radius: 2px 2px 0 0;
+	}
+
+	.icon-light .i2 {
+		position: absolute;
+		bottom: -5px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 6px;
+		height: 3px;
+		background-color: #fff;
+		border-radius: 0 0 2px 2px;
+	}
+
+	.icon-album {
+		width: 22px;
+		height: 18px;
+		border: 2px solid #fff;
+		border-radius: 3px;
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		box-sizing: border-box;
+	}
+
+	.icon-album .i1 {
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: 10px;
+		height: 6px;
+		border: 1.5px solid #fff;
+		border-top: none;
+		border-radius: 0 0 2px 2px;
+	}
+
+	.icon-album .i2 {
+		position: absolute;
+		top: -3px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 6px;
+		height: 3px;
+		background-color: #fff;
+		border-radius: 2px 2px 0 0;
+	}
+
+	.action-label {
+		font-size: 12px;
+		color: #fff;
+		margin-top: 8px;
+	}
+</style>

@@ -1,0 +1,239 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">个人信息</text>
+			<text class="nav-save" @click="onSave">保存</text>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<view class="form-card">
+				<!-- 头像行 -->
+				<view class="form-item avatar-row" @click="onAvatarClick">
+					<text class="form-label">头像</text>
+					<view class="avatar-wrapper">
+						<view class="avatar">
+							<text class="avatar-text">小</text>
+						</view>
+					</view>
+					<view class="arrow"></view>
+				</view>
+
+				<!-- 名字 -->
+				<view class="form-item" @click="onNameClick">
+					<text class="form-label">名字</text>
+					<text class="form-value">{{ name }}</text>
+					<view class="arrow"></view>
+				</view>
+
+				<!-- 性别 -->
+				<view class="form-item" @click="onGenderClick">
+					<text class="form-label">性别</text>
+					<text class="form-value">{{ gender }}</text>
+					<view class="arrow"></view>
+				</view>
+
+				<!-- 地区 -->
+				<view class="form-item" @click="onRegionClick">
+					<text class="form-label">地区</text>
+					<text class="form-value">{{ region }}</text>
+					<view class="arrow"></view>
+				</view>
+
+				<!-- 个性签名 -->
+				<view class="form-item" @click="onSignatureClick">
+					<text class="form-label">个性签名</text>
+					<text class="form-value form-value-gray">{{ signature }}</text>
+					<view class="arrow"></view>
+				</view>
+
+				<!-- 微信号（不可编辑） -->
+				<view class="form-item form-item-disabled form-item-last">
+					<text class="form-label">微信号</text>
+					<text class="form-value form-value-gray">{{ wechatId }}</text>
+					<view class="arrow"></view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	const name = ref<string>('小 Work')
+	const gender = ref<string>('男')
+	const region = ref<string>('成都')
+	const signature = ref<string>('热爱设计与咖啡')
+	const wechatId = ref<string>('xiaowork')
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onSave = () => {
+		uni.showToast({ title: '保存成功', icon: 'none' })
+	}
+
+	const onAvatarClick = () => {
+		uni.showToast({ title: '更换头像', icon: 'none' })
+	}
+
+	const onNameClick = () => {
+		uni.showToast({ title: '编辑名字', icon: 'none' })
+	}
+
+	const onGenderClick = () => {
+		uni.showToast({ title: '选择性别', icon: 'none' })
+	}
+
+	const onRegionClick = () => {
+		uni.showToast({ title: '选择地区', icon: 'none' })
+	}
+
+	const onSignatureClick = () => {
+		uni.showToast({ title: '编辑个性签名', icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F7F7F7;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 12px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 4px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-save {
+		font-size: 16px;
+		color: #07C160;
+		padding: 4px 8px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F7F7F7;
+	}
+
+	/* 表单卡片 */
+	.form-card {
+		background-color: #FFFFFF;
+		margin-top: 8px;
+	}
+
+	.form-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 14px 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+		position: relative;
+	}
+
+	.form-item-last {
+		border-bottom: none;
+	}
+
+	/* 头像行特殊布局 */
+	.avatar-row {
+		padding: 16px;
+	}
+
+	.avatar-wrapper {
+		flex: 1;
+		display: flex;
+		justify-content: flex-end;
+		padding-right: 20px;
+	}
+
+	.avatar {
+		width: 56px;
+		height: 56px;
+		border-radius: 8px;
+		background-color: #07C160;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.avatar-text {
+		font-size: 26px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	/* 表单标签 */
+	.form-label {
+		font-size: 16px;
+		color: #333;
+		width: 80px;
+	}
+
+	/* 表单值 */
+	.form-value {
+		flex: 1;
+		text-align: right;
+		font-size: 15px;
+		color: #333;
+		padding-right: 18px;
+	}
+
+	.form-value-gray {
+		color: #999;
+	}
+
+	/* 右箭头 */
+	.arrow {
+		width: 8px;
+		height: 8px;
+		border-top: 2px solid #C8C8C8;
+		border-right: 2px solid #C8C8C8;
+		transform: rotate(45deg);
+		position: absolute;
+		right: 16px;
+	}
+
+	/* 不可编辑行 */
+	.form-item-disabled .form-label {
+		color: #999;
+	}
+</style>

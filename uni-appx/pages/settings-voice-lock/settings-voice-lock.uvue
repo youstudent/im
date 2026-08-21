@@ -1,0 +1,177 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">声音锁</text>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<view class="desc">声音锁可帮助你在声音验证通过后登录，提高账号安全。</view>
+
+			<view class="record-area">
+				<view class="record-circle" @click="onStartRecord">
+					<text class="record-circle-text">按住</text>
+				</view>
+				<text class="hint">请按住说话，朗读数字 8 4 9 2</text>
+			</view>
+
+			<view class="wave-bar"></view>
+
+			<view class="button-row">
+				<view class="btn btn-outline" @click="onReRecord">
+					<text class="btn-text-outline">重录</text>
+				</view>
+				<view class="btn btn-primary" @click="onNext">
+					<text class="btn-text-primary">下一步</text>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	const goBack = () => {
+		uni.navigateBack({ delta: 1 })
+	}
+
+	const onStartRecord = () => {
+		uni.showToast({ title: '开始录制', icon: 'none' })
+	}
+
+	const onReRecord = () => {
+		uni.showToast({ title: '重新录制', icon: 'none' })
+	}
+
+	const onNext = () => {
+		uni.showToast({ title: '下一步', icon: 'none' })
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F7F7F7;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #FFFFFF;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		height: 44px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-right: 12px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F7F7F7;
+	}
+
+	.desc {
+		font-size: 13px;
+		color: #888;
+		line-height: 20px;
+		padding: 16px 16px 24px 16px;
+	}
+
+	.record-area {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 24px 0 28px 0;
+	}
+
+	.record-circle {
+		width: 120px;
+		height: 120px;
+		border-radius: 60px;
+		background-color: #07C160;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-bottom: 20px;
+	}
+
+	.record-circle-text {
+		font-size: 18px;
+		color: #FFFFFF;
+		font-weight: 600;
+	}
+
+	.hint {
+		font-size: 15px;
+		color: #333;
+	}
+
+	.wave-bar {
+		height: 36px;
+		background-color: #EEEEEE;
+		margin: 0 16px 24px 16px;
+		border-radius: 4px;
+	}
+
+	.button-row {
+		display: flex;
+		flex-direction: row;
+		padding: 0 16px;
+	}
+
+	.btn {
+		flex: 1;
+		height: 44px;
+		border-radius: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.btn-outline {
+		background-color: #FFFFFF;
+		border: 1px solid #07C160;
+		margin-right: 12px;
+	}
+
+	.btn-primary {
+		background-color: #07C160;
+	}
+
+	.btn-text-outline {
+		font-size: 16px;
+		color: #07C160;
+	}
+
+	.btn-text-primary {
+		font-size: 16px;
+		color: #FFFFFF;
+		font-weight: 600;
+	}
+</style>

@@ -1,0 +1,189 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="back-icon" @click="goBack"></view>
+      <text class="nav-title">收藏</text>
+      <view class="more-icon" @click="onMore">
+        <text class="dot"></text>
+        <text class="dot"></text>
+        <text class="dot"></text>
+      </view>
+    </view>
+    <view class="content-card">
+      <view class="cover">
+        <view class="cover-icon">
+          <view class="i1"></view>
+          <view class="i2"></view>
+        </view>
+      </view>
+      <text class="title">成都美食探店攻略</text>
+      <text class="desc">宽窄巷子、春熙路、玉林路……周末两天吃遍成都，附详细路线与人均消费。</text>
+      <view class="action-row">
+        <text class="action-fwd" @click="onForward">转发</text>
+        <text class="action-del" @click="onDelete">删除</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const goBack = () => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onMore = () => {
+  uni.showToast({ title: '更多', icon: 'none' })
+}
+
+const onForward = () => {
+  uni.showToast({ title: '已转发', icon: 'success' })
+}
+
+const onDelete = () => {
+  uni.showToast({ title: '已删除收藏', icon: 'success' })
+  setTimeout(() => {
+    uni.navigateBack({ delta: 1 })
+  }, 1500)
+}
+</script>
+
+<style>
+.page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  width: 100%;
+  height: 44px;
+  background: #FFFFFF;
+}
+
+.nav-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  background: #FFFFFF;
+}
+
+.back-icon {
+  width: 12px;
+  height: 12px;
+  border-left: 2px solid #000;
+  border-bottom: 2px solid #000;
+  transform: rotate(45deg);
+}
+
+.nav-title {
+  color: #000;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.more-icon {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 20px;
+  height: 16px;
+}
+
+.dot {
+  width: 4px;
+  height: 4px;
+  background: #000;
+  border-radius: 50%;
+}
+
+.content-card {
+  background: #FFFFFF;
+  margin: 8px;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.cover {
+  width: 100%;
+  height: 180px;
+  background: #E8E8E8;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cover-icon {
+  width: 40px;
+  height: 40px;
+  border: 2px solid #BFBFBF;
+  border-radius: 6px;
+  position: relative;
+}
+
+.cover-icon .i1 {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #BFBFBF;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+.cover-icon .i2 {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid #BFBFBF;
+  border-radius: 50%;
+  box-sizing: border-box;
+  background: #E8E8E8;
+}
+
+.title {
+  color: #000;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.desc {
+  color: #666;
+  font-size: 14px;
+  line-height: 22px;
+  margin-bottom: 16px;
+}
+
+.action-row {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 8px 0 0 0;
+  border-top: 1px solid #EEE;
+  margin-top: 4px;
+  padding-top: 16px;
+}
+
+.action-fwd {
+  color: #07C160;
+  font-size: 14px;
+}
+
+.action-del {
+  color: #EE2C2C;
+  font-size: 14px;
+}
+</style>

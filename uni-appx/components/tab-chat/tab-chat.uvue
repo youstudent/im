@@ -1,0 +1,360 @@
+<template>
+	<view class="page">
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="nav-left"></view>
+			<text class="nav-title">chat</text>
+			<view class="nav-right" @click="onAdd">
+				<view class="icon-plus">
+					<view class="i1"></view>
+					<view class="i2"></view>
+				</view>
+			</view>
+		</view>
+
+		<!-- 搜索栏 -->
+		<view class="search-wrap">
+			<view class="search-bar">
+				<view class="search-icon">
+					<view class="i2"></view>
+				</view>
+				<text class="search-text">搜索</text>
+			</view>
+		</view>
+
+		<!-- 会话列表 -->
+		<scroll-view class="list-scroll" scroll-y>
+			<view class="chat-list">
+				<view
+					class="chat-item"
+					v-for="item in chatList"
+					:key="item.id"
+					hover-class="item-hover"
+					@click="onItemClick(item)"
+				>
+					<view class="avatar-wrap">
+						<view
+							class="avatar"
+							:style="{ backgroundColor: item.avatarColor }"
+						>
+							<text class="avatar-text">{{ item.avatarText }}</text>
+						</view>
+						<view v-if="item.unread > 0" class="badge">
+							<text class="badge-text">{{ item.unread }}</text>
+						</view>
+					</view>
+
+					<view class="content">
+						<view class="content-top">
+							<text class="name">{{ item.name }}</text>
+							<text class="time">{{ item.time }}</text>
+						</view>
+						<text class="message">{{ item.message }}</text>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	import { ref } from 'vue'
+
+	type ChatItem = {
+		id: string
+		name: string
+		avatarText: string
+		avatarColor: string
+		message: string
+		time: string
+		unread: number
+	}
+
+	const chatList = ref<ChatItem[]>([
+		{
+			id: '1',
+			name: '林晚',
+			avatarText: '林',
+			avatarColor: '#FF9500',
+			message: '在吗？明天一起吃饭呀',
+			time: '14:30',
+			unread: 2
+		},
+		{
+			id: '2',
+			name: '产品交流群',
+			avatarText: '群',
+			avatarColor: '#07C160',
+			message: '[图片]',
+			time: '14:22',
+			unread: 9
+		},
+		{
+			id: '3',
+			name: '张可',
+			avatarText: '张',
+			avatarColor: '#007AFF',
+			message: '好的，收到～',
+			time: '昨天',
+			unread: 0
+		},
+		{
+			id: '4',
+			name: '文件传输助手',
+			avatarText: '文',
+			avatarColor: '#07C160',
+			message: '设计稿v2.pdf',
+			time: '昨天',
+			unread: 0
+		},
+		{
+			id: '5',
+			name: '李娜',
+			avatarText: '李',
+			avatarColor: '#FF4D6A',
+			message: '周末爬山吗？',
+			time: '周二',
+			unread: 0
+		},
+		{
+			id: '6',
+			name: '订阅号',
+			avatarText: '订',
+			avatarColor: '#FF9500',
+			message: '科技早报：AI 新进展',
+			time: '周一',
+			unread: 0
+		}
+	])
+
+	const onAdd = () => {
+		uni.showToast({ title: '发起聊天', icon: 'none' })
+	}
+
+	const onItemClick = (item: ChatItem) => {
+		// 统一右滑推入转场（微信风格），与各会话页 navigateBack 动画对应
+		if (item.id === '2') {
+			uni.navigateTo({ url: '/pages/group-chat/group-chat', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		if (item.id === '4') {
+			uni.navigateTo({ url: '/pages/chat-media/chat-media', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		if (item.id === '6') {
+			uni.navigateTo({ url: '/pages/subscription/subscription', animationType: 'slide-in-right', animationDuration: 300 })
+			return
+		}
+		uni.navigateTo({ url: '/pages/chat/chat', animationType: 'slide-in-right', animationDuration: 300 })
+	}
+
+</script>
+
+<style scoped>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #FFFFFF;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 12px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.nav-left {
+		width: 32px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+		height: 32px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.icon-plus {
+		width: 22px;
+		height: 22px;
+		position: relative;
+	}
+
+	.icon-plus .i1,
+	.icon-plus .i2 {
+		position: absolute;
+		background-color: #000;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+	}
+
+	.icon-plus .i1 {
+		width: 18px;
+		height: 2px;
+	}
+
+	.icon-plus .i2 {
+		width: 2px;
+		height: 18px;
+	}
+
+	/* 搜索栏 */
+	.search-wrap {
+		background-color: #FFFFFF;
+		padding: 8px 12px;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.search-bar {
+		display: flex;
+		flex-direction: row;
+		justify-content: center;
+		align-items: center;
+		height: 36px;
+		background-color: #F5F5F5;
+		border-radius: 6px;
+	}
+
+	.search-icon {
+		width: 14px;
+		height: 14px;
+		border: 2px solid #999;
+		border-radius: 50%;
+		position: relative;
+		margin-right: 6px;
+	}
+
+	.search-icon .i2 {
+		position: absolute;
+		bottom: -3px;
+		right: -3px;
+		width: 6px;
+		height: 2px;
+		background-color: #999;
+		transform: rotate(45deg);
+		transform-origin: left center;
+	}
+
+	.search-text {
+		font-size: 14px;
+		color: #999;
+	}
+
+	/* 会话列表 */
+	.list-scroll {
+		flex: 1;
+		background-color: #FFFFFF;
+	}
+
+	.chat-list {
+		background-color: #FFFFFF;
+	}
+
+	.chat-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		padding: 12px 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	/* 点击按压反馈 */
+	.chat-item.item-hover {
+		background-color: #F0F0F0;
+	}
+
+	.avatar-wrap {
+		position: relative;
+		width: 48px;
+		height: 48px;
+		margin-right: 12px;
+	}
+
+	.avatar {
+		width: 48px;
+		height: 48px;
+		border-radius: 10px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+	}
+
+	.avatar-text {
+		font-size: 18px;
+		color: #FFFFFF;
+		font-weight: 500;
+	}
+
+	.badge {
+		position: absolute;
+		top: -5px;
+		right: -5px;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 4px;
+		background-color: #FF3B30;
+		border-radius: 9px;
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		box-sizing: border-box;
+	}
+
+	.badge-text {
+		font-size: 11px;
+		color: #FFFFFF;
+		line-height: 1;
+	}
+
+	.content {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		overflow: hidden;
+	}
+
+	.content-top {
+		display: flex;
+		flex-direction: row;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.name {
+		font-size: 16px;
+		color: #000;
+		font-weight: 500;
+	}
+
+	.time {
+		font-size: 12px;
+		color: #B2B2B2;
+	}
+
+	.message {
+		font-size: 14px;
+		color: #999;
+		margin-top: 6px;
+		lines: 1;
+		text-overflow: ellipsis;
+		overflow: hidden;
+	}
+
+</style>

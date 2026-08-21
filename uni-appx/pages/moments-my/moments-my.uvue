@@ -1,0 +1,407 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="nav-bar">
+      <view class="nav-icon camera-icon" @click="onCamera">
+        <view class="cam-body"></view>
+        <view class="cam-top"></view>
+        <view class="cam-lens"></view>
+        <view class="cam-flash"></view>
+      </view>
+      <text class="nav-title">我的朋友圈</text>
+      <view class="nav-icon clock-icon" @click="onClock">
+        <view class="clock-circle"></view>
+        <view class="clock-hand hh"></view>
+        <view class="clock-hand mh"></view>
+        <view class="clock-dot"></view>
+        <view class="clock-arrow-back"></view>
+      </view>
+    </view>
+
+    <scroll-view class="content" scroll-y>
+      <view
+        v-for="(item, idx) in moments"
+        :key="idx"
+        class="moment-card"
+        @click="onMoment(item.id)"
+      >
+        <view class="moment-header">
+          <view
+            class="avatar"
+            :style="{ background: item.avatarBg }"
+          >
+            <text class="avatar-text">{{ item.avatarChar }}</text>
+          </view>
+          <view class="header-info">
+            <text class="user-name">{{ item.name }}</text>
+            <text class="moment-text">{{ item.text }}</text>
+            <view v-if="item.photos.length > 0" class="photo-list">
+              <view
+                v-for="(p, pi) in item.photos"
+                :key="pi"
+                class="photo"
+                :class="{ 'photo-last-row': (pi + 1) % 2 === 0, 'photo-last': isLastPhoto(item.photos, pi) }"
+                :style="{ background: p }"
+                @click.stop="onPhoto"
+              ></view>
+            </view>
+            <view v-if="item.link" class="link-card" @click.stop="onLink">
+              <view class="link-thumb"></view>
+              <text class="link-text">{{ item.link }}</text>
+            </view>
+            <text class="moment-time">{{ item.time }}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="footer-tips">
+        <text class="footer-text">仅展示最近半年的朋友圈</text>
+      </view>
+      <view class="bottom-space"></view>
+    </scroll-view>
+  </view>
+</template>
+
+<script setup lang="uts">
+type MomentItem = {
+  id: number
+  name: string
+  avatarBg: string
+  avatarChar: string
+  text: string
+  photos: string[]
+  link?: string
+  time: string
+}
+
+const moments: MomentItem[] = [
+  {
+    id: 1,
+    name: '林小北',
+    avatarBg: '#FF9500',
+    avatarChar: '林',
+    text: '周末上山看云海，四点半起床是值得的。风景真的绝了，推荐大家有机会一定要去一次！',
+    photos: [
+      'linear-gradient(135deg, #FFB347 0%, #FF8C42 50%, #4A5568 100%)',
+      'linear-gradient(135deg, #4A5568 0%, #2D3748 50%, #FF6B35 100%)',
+      'linear-gradient(135deg, #9AE6B4 0%, #68D391 50%, #2F855A 100%)'
+    ],
+    time: '昨天 08:32'
+  },
+  {
+    id: 2,
+    name: '林小北',
+    avatarBg: '#FF9500',
+    avatarChar: '林',
+    text: '新做的手冲，豆子换成了日晒，酸度刚好。',
+    photos: [
+      'linear-gradient(135deg, #6B4423 0%, #8B5A2B 50%, #3E2723 100%)'
+    ],
+    time: '2 天前'
+  },
+  {
+    id: 3,
+    name: '林小北',
+    avatarBg: '#FF9500',
+    avatarChar: '林',
+    text: '这篇讲设计规范的文章写得很清楚，推荐一读。',
+    photos: [],
+    link: '如何搭建一套可落地的设计规范',
+    time: '3 天前'
+  }
+]
+
+const goBack = (): void => {
+  uni.navigateBack({ delta: 1 })
+}
+
+const onCamera = (): void => {
+  uni.showToast({ title: '打开相机', icon: 'none' })
+}
+
+const onClock = (): void => {
+  uni.showToast({ title: '查看历史', icon: 'none' })
+}
+
+const onPhoto = (): void => {
+  uni.showToast({ title: '查看照片', icon: 'none' })
+}
+
+const isLastPhoto = (photos: string[], index: number): boolean => {
+  return index === photos.length - 1
+}
+
+const onLink = (): void => {
+  uni.showToast({ title: '打开文章', icon: 'none' })
+}
+
+const onMoment = (id: number): void => {
+  uni.navigateTo({ url: '/pages/moment-detail/moment-detail' })
+}
+</script>
+
+<style>
+.page {
+  width: 100%;
+  height: 100%;
+  background: #EDEDED;
+  display: flex;
+  flex-direction: column;
+}
+
+.status-bar {
+  width: 100%;
+  height: 44px;
+  background: #07C160;
+  flex-shrink: 0;
+}
+
+.nav-bar {
+  width: 100%;
+  height: 44px;
+  background: #07C160;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  flex-shrink: 0;
+}
+
+.nav-title {
+  color: #FFFFFF;
+  font-size: 17px;
+  font-weight: bold;
+}
+
+.nav-icon {
+  width: 28px;
+  height: 28px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 相机图标 */
+.camera-icon .cam-body {
+  width: 22px;
+  height: 16px;
+  border: 1.5px solid #FFFFFF;
+  border-radius: 2px;
+  position: absolute;
+  top: 8px;
+  left: 3px;
+}
+
+.camera-icon .cam-top {
+  width: 8px;
+  height: 3px;
+  border: 1.5px solid #FFFFFF;
+  border-bottom: none;
+  position: absolute;
+  top: 5px;
+  left: 9px;
+}
+
+.camera-icon .cam-lens {
+  width: 7px;
+  height: 7px;
+  border: 1.2px solid #FFFFFF;
+  border-radius: 50%;
+  position: absolute;
+  top: 12.5px;
+  left: 10.5px;
+}
+
+.camera-icon .cam-flash {
+  width: 3px;
+  height: 3px;
+  background: #FFFFFF;
+  border-radius: 0.5px;
+  position: absolute;
+  top: 10px;
+  left: 6px;
+}
+
+/* 时钟图标 */
+.clock-icon .clock-circle {
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid #FFFFFF;
+  border-radius: 50%;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+}
+
+.clock-icon .clock-hand {
+  position: absolute;
+  background: #FFFFFF;
+  transform-origin: bottom center;
+  left: 13.5px;
+}
+
+.clock-icon .hh {
+  width: 1.5px;
+  height: 6px;
+  top: 8px;
+  transform: rotate(-30deg);
+}
+
+.clock-icon .mh {
+  width: 1.5px;
+  height: 9px;
+  top: 5px;
+  transform: rotate(60deg);
+}
+
+.clock-icon .clock-dot {
+  width: 2px;
+  height: 2px;
+  background: #FFFFFF;
+  border-radius: 50%;
+  position: absolute;
+  top: 13px;
+  left: 12.5px;
+}
+
+.clock-icon .clock-arrow-back {
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-bottom: 4px solid #FFFFFF;
+  position: absolute;
+  top: 4px;
+  left: 12.5px;
+  transform: rotate(45deg);
+}
+
+.content {
+  flex: 1;
+  width: 100%;
+}
+
+.moment-card {
+  background: #FFFFFF;
+  padding: 14px 14px 14px 14px;
+  margin-bottom: 10px;
+}
+
+.moment-header {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.avatar-text {
+  color: #FFFFFF;
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.header-info {
+  flex: 1;
+  margin-left: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.user-name {
+  color: #576B95;
+  font-size: 15px;
+  font-weight: bold;
+  line-height: 20px;
+  margin-bottom: 6px;
+}
+
+.moment-text {
+  color: #333333;
+  font-size: 15px;
+  line-height: 22px;
+  margin-bottom: 8px;
+}
+
+.photo-list {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.photo {
+  width: 100px;
+  height: 100px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-right: 4px;
+  margin-bottom: 4px;
+}
+
+.photo-last-row {
+  margin-right: 0;
+}
+
+.photo-last {
+  margin-bottom: 0;
+}
+
+.link-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: #F2F2F2;
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.link-thumb {
+  width: 40px;
+  height: 40px;
+  background: #E8E8E8;
+  border-radius: 4px;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.link-text {
+  color: #576B95;
+  font-size: 14px;
+  flex: 1;
+  line-height: 20px;
+}
+
+.moment-time {
+  color: #999999;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.footer-tips {
+  padding: 24px 0 16px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.footer-text {
+  color: #B2B2B2;
+  font-size: 12px;
+}
+
+.bottom-space {
+  height: 40px;
+}
+</style>

@@ -1,0 +1,182 @@
+<template>
+	<view class="page">
+		<view class="status-bar"></view>
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">朋友圈权限</text>
+		</view>
+		<scroll-view class="content" scroll-y>
+			<view class="card">
+				<view class="row">
+					<view class="row-text">
+						<text class="row-title">允许朋友查看朋友圈的范围</text>
+						<text class="row-sub">{{ rangeLabel }}</text>
+					</view>
+					<view class="toggle" :class="{ on: rangeOpen }" @click="rangeOpen = !rangeOpen">
+						<view class="toggle-dot"></view>
+					</view>
+				</view>
+				<view class="divider"></view>
+				<view class="row">
+					<view class="row-text">
+						<text class="row-title">不让他（她）看我</text>
+						<text class="row-sub">0 人</text>
+					</view>
+					<view class="toggle" :class="{ on: blockSeeMe }" @click="toggleBlockSeeMe">
+						<view class="toggle-dot"></view>
+					</view>
+				</view>
+				<view class="divider"></view>
+				<view class="row">
+					<view class="row-text">
+						<text class="row-title">不看他（她）</text>
+						<text class="row-sub">0 人</text>
+					</view>
+					<view class="toggle" :class="{ on: blockSeeThem }" @click="toggleBlockSeeThem">
+						<view class="toggle-dot"></view>
+					</view>
+				</view>
+			</view>
+
+			<view class="card">
+				<view class="row">
+					<view class="row-text">
+						<text class="row-title">允许朋友查看我的状态</text>
+						<text class="row-sub">全部朋友</text>
+					</view>
+					<view class="toggle" :class="{ on: statusOpen }" @click="statusOpen = !statusOpen">
+						<view class="toggle-dot"></view>
+					</view>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+import { ref } from 'vue'
+
+const rangeOpen = ref<boolean>(true)
+const rangeLabel = ref<string>('最近三天')
+const blockSeeMe = ref<boolean>(false)
+const blockSeeThem = ref<boolean>(false)
+const statusOpen = ref<boolean>(true)
+
+const goBack = () => {
+	uni.navigateBack({ delta: 1 })
+}
+
+const toggleBlockSeeMe = () => {
+	blockSeeMe.value = !blockSeeMe.value
+	uni.showToast({ title: '不让他(她)看我', icon: 'none' })
+}
+
+const toggleBlockSeeThem = () => {
+	blockSeeThem.value = !blockSeeThem.value
+	uni.showToast({ title: '不看他(她)', icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+	flex: 1;
+	background-color: #F7F7F7;
+}
+
+.status-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+}
+
+.nav-bar {
+	height: 44px;
+	background-color: #F7F7F7;
+	flex-direction: row;
+	align-items: center;
+	justify-content: center;
+	position: relative;
+}
+
+.back-icon {
+	position: absolute;
+	left: 16px;
+	width: 12px;
+	height: 12px;
+	border-left: 2px solid #333;
+	border-bottom: 2px solid #333;
+	transform: rotate(45deg);
+}
+
+.nav-title {
+	font-size: 17px;
+	font-weight: 600;
+	color: #000;
+}
+
+.content {
+	flex: 1;
+	padding: 8px 12px;
+}
+
+.card {
+	background-color: #FFFFFF;
+	border-radius: 8px;
+	margin-bottom: 12px;
+	overflow: hidden;
+}
+
+.row {
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 16px;
+	min-height: 52px;
+}
+
+.row-text {
+	flex: 1;
+	flex-direction: column;
+}
+
+.row-title {
+	font-size: 16px;
+	color: #333;
+	line-height: 22px;
+}
+
+.row-sub {
+	font-size: 12px;
+	color: #999;
+	margin-top: 2px;
+	line-height: 16px;
+}
+
+.divider {
+	height: 1px;
+	background-color: #EEE;
+	margin-left: 16px;
+}
+
+.toggle {
+	width: 30px;
+	height: 18px;
+	border-radius: 9px;
+	background-color: #DADADA;
+	flex-direction: row;
+	align-items: center;
+	padding: 2px;
+	position: relative;
+}
+
+.toggle.on {
+	background-color: #07C160;
+	justify-content: flex-end;
+}
+
+.toggle-dot {
+	width: 14px;
+	height: 14px;
+	border-radius: 7px;
+	background-color: #FFFFFF;
+}
+</style>

@@ -1,0 +1,177 @@
+<template>
+  <view class="page">
+    <view class="status-bar"></view>
+    <view class="search-bar">
+      <view class="search-icon">
+        <view class="i2"></view>
+      </view>
+      <text class="search-placeholder">搜索地点</text>
+    </view>
+    <view class="map-area">
+      <view class="location-pin">
+        <view class="i2"></view>
+      </view>
+    </view>
+    <view class="bottom-card">
+      <view class="current-row">
+        <text class="current-name">成都东站</text>
+        <view class="send-btn" @click="onSend">
+          <text class="send-text">发送</text>
+        </view>
+      </view>
+      <view class="divider"></view>
+      <view class="poi-row" @click="onPick('春熙路')">
+        <text class="poi-name">春熙路</text>
+        <text class="poi-addr">锦江区春熙路步行街</text>
+      </view>
+      <view class="divider"></view>
+      <view class="poi-row" @click="onPick('宽窄巷子')">
+        <text class="poi-name">宽窄巷子</text>
+        <text class="poi-addr">青羊区金河路口</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="uts">
+const onSend = () => {
+  uni.showToast({ title: '位置已发送', icon: 'success' })
+  setTimeout(() => {
+    uni.navigateBack({ delta: 1 })
+  }, 2000)
+}
+
+const onPick = (name: string) => {
+  uni.showToast({ title: '已选择：' + name, icon: 'none' })
+}
+</script>
+
+<style>
+.page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #F7F7F7;
+}
+
+.status-bar {
+  width: 100%;
+  height: 44px;
+  background: #FFFFFF;
+}
+
+.search-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  height: 56px;
+  padding: 0 16px;
+  background: #FFFFFF;
+}
+
+.search-icon {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #999;
+  border-radius: 50%;
+  margin-right: 8px;
+  position: relative;
+}
+
+.search-icon .i2 {
+  position: absolute;
+  bottom: -5px;
+  right: -5px;
+  width: 6px;
+  height: 1.5px;
+  background: #999;
+  transform: rotate(45deg);
+}
+
+.search-placeholder {
+  color: #999;
+  font-size: 15px;
+}
+
+.map-area {
+  flex: 1;
+  background: #E8E8E8;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.location-pin {
+  width: 24px;
+  height: 24px;
+  background: #EE2C2C;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  position: relative;
+}
+
+.location-pin .i2 {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 12px;
+  height: 12px;
+  background: #FFFFFF;
+  border-radius: 50%;
+}
+
+.bottom-card {
+  background: #FFFFFF;
+  padding: 4px 0 0 0;
+}
+
+.current-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  height: 48px;
+}
+
+.current-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: #000;
+}
+
+.send-btn {
+  background: #07C160;
+  border-radius: 4px;
+  padding: 6px 18px;
+}
+
+.send-text {
+  color: #FFFFFF;
+  font-size: 14px;
+}
+
+.divider {
+  height: 1px;
+  background: #EEE;
+  margin: 0 16px;
+}
+
+.poi-row {
+  padding: 10px 16px;
+}
+
+.poi-name {
+  font-size: 14px;
+  color: #333;
+}
+
+.poi-addr {
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
+}
+</style>

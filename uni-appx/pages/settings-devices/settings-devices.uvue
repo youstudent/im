@@ -1,0 +1,187 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">登录设备管理</text>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<view class="section-label">当前设备</view>
+			<view class="card">
+				<view class="device-row current">
+					<view class="device-icon">
+						<text class="device-icon-text">Phone</text>
+					</view>
+					<view class="device-info">
+						<text class="device-name">iPhone 15 Pro</text>
+						<text class="device-time">登录于 2026-08-01 · 当前设备</text>
+					</view>
+				</view>
+			</view>
+
+			<view class="section-label">其他设备</view>
+			<view class="card">
+				<view class="device-row">
+					<view class="device-info">
+						<text class="device-name">Windows 微信</text>
+						<text class="device-time">登录于 2026-08-10</text>
+					</view>
+					<text class="logout-btn" @click="onLogout('Windows 微信')">退出</text>
+				</view>
+				<view class="device-row">
+					<view class="device-info">
+						<text class="device-name">Mac 微信</text>
+						<text class="device-time">登录于 2026-08-05</text>
+					</view>
+					<text class="logout-btn" @click="onLogout('Mac 微信')">退出</text>
+				</view>
+				<view class="device-row device-row-last">
+					<view class="device-info">
+						<text class="device-name">iPad 微信</text>
+						<text class="device-time">登录于 2026-07-20</text>
+					</view>
+					<text class="logout-btn" @click="onLogout('iPad 微信')">退出</text>
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	const goBack = () => {
+		uni.navigateBack({ delta: 1 })
+	}
+
+	const onLogout = (name: string) => {
+		uni.showModal({
+			title: '提示',
+			content: `确认退出 ${name}？`,
+			confirmText: '退出',
+			success: (r) => {
+				if (r.confirm) {
+					uni.showToast({ title: '已退出', icon: 'success' })
+				}
+			}
+		})
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F7F7F7;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #FFFFFF;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		height: 44px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-right: 12px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F7F7F7;
+	}
+
+	.section-label {
+		font-size: 13px;
+		color: #888;
+		padding: 16px 16px 8px 16px;
+	}
+
+	.card {
+		background-color: #FFFFFF;
+		margin: 0 12px 12px 12px;
+		border-radius: 8px;
+		overflow: hidden;
+	}
+
+	.device-row {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		padding: 14px 16px;
+		border-bottom: 1px solid #EEE;
+	}
+
+	.device-row-last {
+		border-bottom: none;
+	}
+
+	.device-row.current .device-info {
+		flex: 1;
+	}
+
+	.device-icon {
+		width: 40px;
+		height: 40px;
+		border-radius: 8px;
+		background-color: #07C160;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-right: 12px;
+	}
+
+	.device-icon-text {
+		font-size: 11px;
+		color: #FFFFFF;
+		font-weight: 600;
+	}
+
+	.device-info {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.device-name {
+		font-size: 16px;
+		color: #333;
+		margin-bottom: 4px;
+	}
+
+	.device-time {
+		font-size: 12px;
+		color: #999;
+	}
+
+	.logout-btn {
+		font-size: 15px;
+		color: #EE2C2C;
+		padding: 4px 0;
+	}
+</style>

@@ -1,0 +1,129 @@
+<template>
+	<view class="page">
+		<!-- 状态栏占位 -->
+		<view class="status-bar"></view>
+
+		<!-- 顶部导航 -->
+		<view class="nav-bar">
+			<view class="back-icon" @click="goBack"></view>
+			<text class="nav-title">新消息通知</text>
+			<view class="nav-right"></view>
+		</view>
+
+		<!-- 内容区 -->
+		<scroll-view class="content" scroll-y>
+			<view class="switch-group">
+				<view
+					class="switch-item"
+					v-for="(item, index) in switchList"
+					:key="item.key"
+					:class="{ 'switch-item-last': index === switchList.length - 1 }"
+				>
+					<text class="switch-label">{{ item.label }}</text>
+					<switch :checked="item.checked" @change="(e: SwitchChangeEvent) => onSwitchChange(item, e)" color="#07C160" />
+				</view>
+			</view>
+		</scroll-view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	type SwitchItem = {
+		key: string
+		label: string
+		checked: boolean
+	}
+
+	const switchList = ref<SwitchItem[]>([
+		{ key: 'receive_notify', label: '接收新消息通知', checked: true },
+		{ key: 'sound', label: '消息提示音', checked: true },
+		{ key: 'vibrate', label: '振动', checked: true },
+		{ key: 'show_detail', label: '通知显示消息详情', checked: true },
+		{ key: 'call_remind', label: '通话提醒', checked: true }
+	])
+
+	const goBack = () => {
+		uni.navigateBack()
+	}
+
+	const onSwitchChange = (item: SwitchItem, e: SwitchChangeEvent) => {
+		item.checked = e.detail.value
+	}
+</script>
+
+<style>
+	.page {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		background-color: #F5F5F5;
+	}
+
+	.status-bar {
+		height: var(--status-bar-height);
+		background-color: #F8F8F8;
+	}
+
+	/* 顶部导航 */
+	.nav-bar {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 44px;
+		padding: 0 8px;
+		background-color: #F8F8F8;
+		border-bottom: 1px solid #E5E5E5;
+	}
+
+	.back-icon {
+		width: 11px;
+		height: 11px;
+		border-left: 2px solid #333;
+		border-bottom: 2px solid #333;
+		transform: rotate(45deg);
+		margin-left: 8px;
+	}
+
+	.nav-title {
+		font-size: 17px;
+		color: #000;
+		font-weight: 600;
+	}
+
+	.nav-right {
+		width: 32px;
+	}
+
+	/* 内容区 */
+	.content {
+		flex: 1;
+		background-color: #F5F5F5;
+	}
+
+	.switch-group {
+		background-color: #FFFFFF;
+		margin-top: 8px;
+	}
+
+	.switch-item {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: 50px;
+		padding: 0 16px;
+		background-color: #FFFFFF;
+		border-bottom: 1px solid #E5E5E5;
+		box-sizing: border-box;
+	}
+
+	.switch-item-last {
+		border-bottom: none;
+	}
+
+	.switch-label {
+		font-size: 16px;
+		color: #000;
+	}
+</style>
